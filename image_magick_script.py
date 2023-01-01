@@ -65,7 +65,7 @@ def image_processing_pipeline(f_image_name, f_original_image_name, f_resize_widt
     f_blur_resize_img = f_resize_blur_ceil_grayscale_img
     f_original_resize_img = cv2.resize(f_original_img, f_resize_dim,
                                      interpolation=cv2.INTER_AREA)  # cv2.INTER_CUBIC
-    return f_blur_resize_img, f_original_resize_img, f_slice_num
+    return f_blur_resize_img, f_original_resize_img, f_slice_num, f_resize_height
 
 
 e = datetime.datetime.now()
@@ -178,7 +178,7 @@ for dir_num in range(len(directory_name_list)):
         original_image_name = temp_original_file_name #orignal that is used to generate resized version of them (in this case one very long image)
         image_name = diff_file_name #diff file that comes from image magick script output
 
-        blur_resize_img, original_resize_img,slice_num = image_processing_pipeline(image_name, original_image_name, resize_width)
+        blur_resize_img, original_resize_img,slice_num,resize_height = image_processing_pipeline(image_name, original_image_name, resize_width)
 
         np.shape(blur_resize_img)
 
@@ -239,19 +239,28 @@ for dir_num in range(len(directory_name_list)):
         print('dir_diff_collection', np.shape(dir_diff_collection))
 
     else:
+        original_file_list = glob.glob(original_file_path + '\\' + directory_name_list[dir_num] + '*.png')
+        clean_file_list = glob.glob(clean_file_path + '\\' + directory_name_list[dir_num] + '*.png')
+        original_file_list.sort() #ascending sort
+        clean_file_list.sort() #ascending sort
+        # print(directory_name_list[dir_num])
+        assert(len(original_file_list) == len(clean_file_list), 'original and clean png number does not match at directory({})'.format(directory_name_list[dir_num]))
         #when original file count matches that of clean file count
         #execute for each file
         for i in range(original_file_count):
             #create diff file by comparing original and clean
-            file_name = r'{:03n}.png'.format(i+1)
-            print(file_name)
-            file_path = '\\' + directory_name_list[dir_num] + '\\' + file_name
+            diff_file_name = r'{:03n}.png'.format(i+1)
+            original_file_name = original_file_list[i]
+            clean_file_name = clean_file_list[i]
+            original_sub_dir_path = '\\' + directory_name_list[dir_num] + '\\' + original_file_name
+            clean_sub_dir_path = '\\' + directory_name_list[dir_num] + '\\' + clean_file_name
+            diff_sub_dir_path = '\\' + directory_name_list[dir_num] + '\\' + diff_file_name
             # print(file_path)
             if run_magick_script:
-                older_script = 'magick compare ' + original_file_path + file_path + ' ' + clean_file_path + file_path + ' -compose Src -highlight-color White -lowlight-color Black ' + diff_file_path + file_path #old processing command
+                older_script = 'magick compare ' + original_file_path + original_sub_dir_path + ' ' + clean_file_path + clean_sub_dir_path + ' -compose Src -highlight-color White -lowlight-color Black ' + diff_file_path + diff_sub_dir_path #old processing command
                 #new script uses gray scale comparison so that a more nuanced comparison and isolation of the region is possible
-                old_script = 'magick ' + original_file_path + file_path + ' ' + clean_file_path + file_path + ' -compose difference -composite -colorspace Gray ' + diff_file_path + file_path #less accurate color comparison(grayscale), also does not work well
-                script ='magick ' + original_file_path + file_path + ' ' + clean_file_path + file_path + ' -compose difference -composite -evaluate Pow 2 -evaluate divide 3 -separate -evaluate-sequence Add -evaluate Pow 0.5 ' + diff_file_path + file_path
+                old_script = 'magick ' + original_file_path + original_sub_dir_path + ' ' + clean_file_path + clean_sub_dir_path + ' -compose difference -composite -colorspace Gray ' + diff_file_path + diff_sub_dir_path #less accurate color comparison(grayscale), also does not work well
+                script ='magick ' + original_file_path + original_sub_dir_path + ' ' + clean_file_path + clean_sub_dir_path + ' -compose difference -composite -evaluate Pow 2 -evaluate divide 3 -separate -evaluate-sequence Add -evaluate Pow 0.5 ' + diff_file_path + diff_sub_dir_path
                 print('script:\n')
                 print(script)
                 l = script.split()
@@ -262,40 +271,12 @@ for dir_num in range(len(directory_name_list)):
             #create diff_slice file by processing slice
             #taken from Image_processing.ipynb
 
-            original_image_name = original_file_path + file_path
-            image_name = diff_file_path + file_path
+            original_image_name = original_file_path + original_sub_dir_path
+            image_name = diff_file_path + diff_sub_dir_path
 
-            img = cv2.imread(image_name)  # , cv2.IMREAD_UNCHANGED)
-            original_img = cv2.imread(original_image_name)
+            #new processing pipeline
+            blur_resize_img, original_resize_img, slice_num,resize_height = image_processing_pipeline(image_name, original_image_name, resize_width)
 
-            np.shape(img)
-            print(np.shape(img))
-            img_height = np.shape(img)[0]
-            img_width = np.shape(img)[1]
-            print('img_height', img_height)
-            print('img_width', img_width)
-            slice_num = math.ceil(img_height / img_width)  # number of vertical slices per image
-            print('slice_num', slice_num)
-            resize_height = round((img_height / img_width) * resize_width)
-            print('resize_height', resize_height)
-
-            resize_dim = (resize_width, resize_height)
-
-            # #full new processing pipeline (uses cv2.INTER_AREA method and grayscaling)
-            grayscale_img = img
-            ceil_to_255 = np.vectorize(lambda t: 255 if t > 0 else 0)
-            filter_20_to_255 = np.vectorize(lambda t: 255 if t > 20 else 0)
-            filter_10_to_255 = np.vectorize(lambda t: 255 if t > 10 else 0)
-            ceil_grayscale_img = filter_20_to_255(grayscale_img)
-            blur_ceil_grayscale_img = cv2.blur(ceil_grayscale_img, (2,2))
-            blur_ceil_grayscale_img = filter_10_to_255(blur_ceil_grayscale_img)
-            blur_ceil_grayscale_img = np.array(blur_ceil_grayscale_img, dtype='uint8') #uint8 conversion needed for resize
-            resize_blur_ceil_grayscale_img = cv2.resize(blur_ceil_grayscale_img, resize_dim, interpolation = cv2.INTER_AREA)
-            resize_blur_ceil_grayscale_img = filter_10_to_255(resize_blur_ceil_grayscale_img)
-            blur_resize_img = resize_blur_ceil_grayscale_img
-
-            original_resize_img = cv2.resize(original_img, resize_dim,
-                                         interpolation=cv2.INTER_AREA)  # cv2.INTER_CUBIC
             #old processing pipeline
 
             # original_blur_img = cv2.blur(img, (2,2))  # blur needs to be applied as the difference is somewhat noisy so it is required to avoid pixelating the
@@ -367,6 +348,8 @@ for dir_num in range(len(directory_name_list)):
                 dir_diff_collection = np.append(dir_diff_collection, l, axis=0)
             print('dir_original_reshape_collection', np.shape(dir_original_reshape_collection))
             print('dir_diff_collection', np.shape(dir_diff_collection))
+            print('reshape_collection', np.shape(dir_original_reshape_collection))
+            print('diff_collection', np.shape(dir_diff_collection))
 
     print(directory_name_list[dir_num])
     print('reshape_collection', np.shape(dir_original_reshape_collection))
