@@ -7,6 +7,7 @@ import glob
 import datetime
 
 run_magick_script = True
+use_combine_panel_mode = False #try to process data even if clean original panel number is different by combining them, tends to produce pretty bad data
 print('run_magick_script', run_magick_script)
 resize_width = 256
 original_file_path = r'.\combined_original'#r'.\VLT_original_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_original_100_105'
@@ -62,7 +63,7 @@ def image_processing_pipeline(f_image_name, f_original_image_name, f_resize_widt
     f_resize_blur_ceil_grayscale_img = cv2.resize(f_blur_ceil_grayscale_img, f_resize_dim, interpolation=cv2.INTER_AREA)
     f_resize_blur_ceil_grayscale_img = filter_10_to_255(f_resize_blur_ceil_grayscale_img)
     f_blur_resize_img = f_resize_blur_ceil_grayscale_img
-    f_original_resize_img = cv2.resize(f_original_img, resize_dim,
+    f_original_resize_img = cv2.resize(f_original_img, f_resize_dim,
                                      interpolation=cv2.INTER_AREA)  # cv2.INTER_CUBIC
     return f_blur_resize_img, f_original_resize_img, f_slice_num
 
@@ -106,6 +107,9 @@ for dir_num in range(len(directory_name_list)):
 
     # if the file counts do not match try to stitch together all the panels in one chapter and then run script instead of going panel by panel
     if clean_file_count != original_file_count:
+        if use_combine_panel_mode == False:
+            print('Combine Panel Mode Disabled Change settings or remove directory({}).'.format(directory_name_list[dir_num]))
+            exit()
         print('Combined panel case triggered')
         print('clean_file_count:', clean_file_count)
         print('original_file_count:', original_file_count)
@@ -151,7 +155,7 @@ for dir_num in range(len(directory_name_list)):
             y += image.shape[0]
 
         for image in original_images:
-            original_result[y:y + image.shape[0], 0:image.shape[1]] = image
+            original_result[original_y:original_y + image.shape[0], 0:image.shape[1]] = image
             original_y += image.shape[0]
 
         # Save the result
