@@ -239,16 +239,19 @@ for dir_num in range(len(directory_name_list)):
         print('dir_diff_collection', np.shape(dir_diff_collection))
 
     else:
-        original_file_list = glob.glob(original_file_path + '\\' + directory_name_list[dir_num] + '*.png')
-        clean_file_list = glob.glob(clean_file_path + '\\' + directory_name_list[dir_num] + '*.png')
+        original_file_list = glob.glob(original_file_path + '\\' + directory_name_list[dir_num] + '\\' + '*.png')
+        clean_file_list = glob.glob(clean_file_path + '\\' + directory_name_list[dir_num] + '\\' + '*.png')
         original_file_list.sort() #ascending sort
         clean_file_list.sort() #ascending sort
         # print(directory_name_list[dir_num])
-        assert(len(original_file_list) == len(clean_file_list), 'original and clean png number does not match at directory({})'.format(directory_name_list[dir_num]))
+        assert len(original_file_list) == len(clean_file_list), 'original and clean png number does not match at directory({})'.format(directory_name_list[dir_num])
         #when original file count matches that of clean file count
         #execute for each file
         for i in range(original_file_count):
             #create diff file by comparing original and clean
+            print('original_file_list', original_file_list)
+            print('clean_file_list', clean_file_list)
+            print('i', i)
             diff_file_name = r'{:03n}.png'.format(i+1)
             original_file_name = original_file_list[i]
             clean_file_name = clean_file_list[i]
@@ -257,10 +260,10 @@ for dir_num in range(len(directory_name_list)):
             diff_sub_dir_path = '\\' + directory_name_list[dir_num] + '\\' + diff_file_name
             # print(file_path)
             if run_magick_script:
-                older_script = 'magick compare ' + original_file_path + original_sub_dir_path + ' ' + clean_file_path + clean_sub_dir_path + ' -compose Src -highlight-color White -lowlight-color Black ' + diff_file_path + diff_sub_dir_path #old processing command
+                older_script = 'magick compare ' + original_file_name + ' ' + clean_file_name + ' -compose Src -highlight-color White -lowlight-color Black ' + diff_file_path + diff_sub_dir_path #old processing command
                 #new script uses gray scale comparison so that a more nuanced comparison and isolation of the region is possible
-                old_script = 'magick ' + original_file_path + original_sub_dir_path + ' ' + clean_file_path + clean_sub_dir_path + ' -compose difference -composite -colorspace Gray ' + diff_file_path + diff_sub_dir_path #less accurate color comparison(grayscale), also does not work well
-                script ='magick ' + original_file_path + original_sub_dir_path + ' ' + clean_file_path + clean_sub_dir_path + ' -compose difference -composite -evaluate Pow 2 -evaluate divide 3 -separate -evaluate-sequence Add -evaluate Pow 0.5 ' + diff_file_path + diff_sub_dir_path
+                old_script = 'magick ' + original_file_name + ' ' + clean_file_name + ' -compose difference -composite -colorspace Gray ' + diff_file_path + diff_sub_dir_path #less accurate color comparison(grayscale), also does not work well
+                script ='magick ' + original_file_name + ' ' + clean_file_name + ' -compose difference -composite -evaluate Pow 2 -evaluate divide 3 -separate -evaluate-sequence Add -evaluate Pow 0.5 ' + diff_file_path + diff_sub_dir_path
                 print('script:\n')
                 print(script)
                 l = script.split()
@@ -271,7 +274,7 @@ for dir_num in range(len(directory_name_list)):
             #create diff_slice file by processing slice
             #taken from Image_processing.ipynb
 
-            original_image_name = original_file_path + original_sub_dir_path
+            original_image_name = original_file_name
             image_name = diff_file_path + diff_sub_dir_path
 
             #new processing pipeline
