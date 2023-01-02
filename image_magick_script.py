@@ -10,12 +10,12 @@ run_magick_script = True
 use_combine_panel_mode = False #try to process data even if clean original panel number is different by combining them, tends to produce pretty bad data
 print('run_magick_script', run_magick_script)
 resize_width = 256
-original_file_path = r'.\combined_original'#r'.\VLT_original_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_original_100_105'
-clean_file_path = r'.\combined_clean'#r'.\VLT_clean_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_clean_100_105'
-diff_file_path = r'.\combined_diff' #r'.\VLT_diff_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_diff_100_105'
-diff_slice_file_path = r'.\combined_diff_slice'#r'.\VLT_diff_slice_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_diff_slice_100_105'
-original_resize_file_path = r'.\combined_original_resize' #r'.\VLT_original_224_resize_100_105'
-combined_file_path = r'.\combined_dataset' #r'.\VLT_combined_224_resize_100_105' #stores all of the files in image form, directories Original (for resized original panel) and Grount Truth (for difference)
+original_file_path = r'.\93_combined_original'#r'.\VLT_original_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_original_100_105'
+clean_file_path = r'.\93_combined_clean'#r'.\VLT_clean_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_clean_100_105'
+diff_file_path = r'.\93_combined_diff' #r'.\VLT_diff_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_diff_100_105'
+diff_slice_file_path = r'.\93_combined_diff_slice'#r'.\VLT_diff_slice_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_diff_slice_100_105'
+original_resize_file_path = r'.\93_combined_original_resize' #r'.\VLT_original_224_resize_100_105'
+combined_file_path = r'.\93_combined_dataset' #r'.\VLT_combined_224_resize_100_105' #stores all of the files in image form, directories Original (for resized original panel) and Grount Truth (for difference)
 directory_name_list = ['100', '101', '102', '103', '104', '105']
 output_image_name = directory_name_list[0]
 
@@ -293,12 +293,14 @@ for dir_num in range(len(directory_name_list)):
             # original_resize_img = cv2.resize(original_img, resize_dim,
             #                              interpolation=cv2.INTER_LANCZOS4)  # cv2.INTER_CUBIC
             np.shape(blur_resize_img)
-
+            print('i, original_file_count, slice_num',i, original_file_count, slice_num)
             for j in range(slice_num):
+                print('i, original_file_count, j, slice_num',i, original_file_count, j, slice_num)
                 if i != (original_file_count-1) and j == (slice_num - 1):
                     crop_img = blur_resize_img[(resize_height - resize_width):, :]
                     original_crop_img = original_resize_img[(resize_height - resize_width):, :]
                 elif i == (original_file_count - 1) and j == (slice_num - 1): #skip last slice of last panel of chapter as it contains logos which are not cleaned
+                    print('SKIP!')
                     break
                 else:
                     crop_img = blur_resize_img[resize_width * j: resize_width * (j + 1), :]
@@ -324,7 +326,9 @@ for dir_num in range(len(directory_name_list)):
             with open(original_npy, 'wb') as f:
                 np.save(f, l_original)
             for j in range(slice_num):
+                print('i, original_file_count, j, slice_num',i, original_file_count, j, slice_num)
                 if i == (original_file_count -1) and j == (slice_num - 1):
+                    print('SKIP!')
                     break
                 total_resized_original_image_count = total_resized_original_image_count + 1
                 total_mask_count = total_mask_count + 1
@@ -347,12 +351,20 @@ for dir_num in range(len(directory_name_list)):
                 dir_original_reshape_collection = l_original
                 dir_diff_collection = l
             else:
-                dir_original_reshape_collection = np.append(dir_original_reshape_collection, l_original, axis=0)
-                dir_diff_collection = np.append(dir_diff_collection, l, axis=0)
+                print('DEBUG dir_original_reshape_collection', np.shape(dir_original_reshape_collection))
+                print('DEBUG dir_diff_collection', np.shape(dir_diff_collection))
+                print('DEBUG l_original',np.shape(l_original))
+                print('DEBUG l', np.shape(np.array(l)))
+                print('DEBUG i',i)
+                #append only when size is correct
+                l_original = np.array(l_original)
+                l = np.array(l)
+                if l_original.ndim >=2 and l_original.shape[1:] == (resize_width, resize_width, 3) and l.ndim >=2 and l.shape[1:] == (resize_width, resize_width, 3):
+                    dir_original_reshape_collection = np.append(dir_original_reshape_collection, l_original, axis=0)
+                    dir_diff_collection = np.append(dir_diff_collection, l, axis=0)
             print('dir_original_reshape_collection', np.shape(dir_original_reshape_collection))
             print('dir_diff_collection', np.shape(dir_diff_collection))
-            print('reshape_collection', np.shape(dir_original_reshape_collection))
-            print('diff_collection', np.shape(dir_diff_collection))
+
 
     print(directory_name_list[dir_num])
     print('reshape_collection', np.shape(dir_original_reshape_collection))
@@ -387,10 +399,12 @@ test_original_npy_name = original_resize_file_path + '\\' + 'test_reshape_collec
 test_diff_npy_name = diff_slice_file_path + '\\' + 'test_diff_collection.npy'
 total_original_npy_name = original_resize_file_path + '\\' + 'total_reshape_collection.npy'
 total_diff_npy_name = diff_slice_file_path + '\\' + 'total_diff_collection.npy'
-with open(total_original_npy_name, 'wb') as f:
-    np.save(f, total_original_reshape_collection)
-with open(total_diff_npy_name, 'wb') as f:
-    np.save(f, total_diff_collection)
+if len(directory_name_list) > 1: #as the very first entry goes to test_reshape/diff_collection so need 2 or more directories
+    with open(total_original_npy_name, 'wb') as f:
+        np.save(f, total_original_reshape_collection)
+    with open(total_diff_npy_name, 'wb') as f:
+        np.save(f, total_diff_collection)
+
 with open(test_original_npy_name, 'wb') as f:
     np.save(f, test_original_reshape_collection)
 with open(test_diff_npy_name, 'wb') as f:
