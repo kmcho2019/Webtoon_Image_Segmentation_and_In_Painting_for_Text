@@ -18,12 +18,15 @@ from pyclustering.cluster import cluster_visualizer
 from pyclustering.cluster.xmeans import xmeans
 from pyclustering.cluster.center_initializer import kmeans_plusplus_initializer
 from pyclustering.utils import read_image
-from pyclustering.samples.definitions import IMAGE_SIMPLE_SAMPLES;
+from pyclustering.samples.definitions import IMAGE_SIMPLE_SAMPLES
 
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 
-data_file_path = r'./combined_dataset_checked'
+import tqdm
+import time
+
+data_file_path = r'.\combined_dataset_checked_additonal_exclusions_1'#r'.\combined_dataset_checked'
 new_processed_data_path = data_file_path + '_Mask_R_CNN_preprocessed'
 np.random.seed(42)
 INIT_CENTERS = 1
@@ -33,14 +36,21 @@ MIN_DISTANCE = 3 #any distance greater than MIN_DISTANCE will result in separate
 sub_directory_list = ['train_dir', 'valid_dir', 'test_dir']
 sub_sub_directory_list = ['Ground_Truth', 'Original']
 
+# Delete Directory if is previously exists (in order to prevent previous runs messing with current run of program)
+if os.path.exists(new_processed_data_path):
+    shutil.rmtree(new_processed_data_path)
+    print(f"{new_processed_data_path} has been deleted")
+else:
+    print(f"{new_processed_data_path} does not exist.")
+
 def make_check_dir(check_file_path):
     isExist = os.path.exists(check_file_path)
     if isExist == False:
         os.makedirs(check_file_path)
 
 def load_data(path, split=0.1):
-    images = sorted(glob(os.path.join(path, "Original/*")))
-    masks = sorted(glob(os.path.join(path, "Ground_Truth/*")))
+    images = sorted(glob(os.path.join(path, "Original\\*")))
+    masks = sorted(glob(os.path.join(path, "Ground_Truth\\*")))
     # images = sorted(glob(os.path.join(path, "images/*")))
     # masks = sorted(glob(os.path.join(path, "masks/*")))
 
@@ -52,21 +62,28 @@ def load_data(path, split=0.1):
         non_zero_exist = np.any(img_mask)
         if not non_zero_exist:
             removed_files.append(masks[i])
-
+    print('removed_files')
+    print(removed_files)
     #remove files in removed_files in both images and mask (assumed that they have identical names)
-    images = [x for x in images if x not in removed_files]
-    masks = [x for x in masks if x not in removed_files]
+    # use os.path.basename to remove the path part of removed_files to simply extract the file name itself
+    images = [x for x in images if os.path.basename(x) not in map(os.path.basename, removed_files)]
+    masks = [x for x in masks if os.path.basename(x) not in map(os.path.basename, removed_files)]
 
-    #alternative implementation of removing files
+    #alternative implementation of removing files (more data efficient)
     original_set = set(images)
-    remove_set = set(removed_files)
+    remove_set = set(map(os.path.basename, removed_files))
     filtered_set = original_set.difference(remove_set)
     images_filtered_list = list(filtered_set)
 
     original_set = set(masks)
-    remove_set = set(removed_files)
+    remove_set = set(map(os.path.basename, removed_files))
     filtered_set = original_set.difference(remove_set)
     masks_filtered_list = list(filtered_set)
+
+    print('images', len(images))
+    print('masks', len(masks))
+    print('images_filtered_list', len(images_filtered_list))
+    print('masks_filtered_list', len(masks_filtered_list))
 
 
     total_size = len(images)
@@ -280,6 +297,7 @@ def extract_bboxes(filename):
       box_masks.append(object_mask)
     return box_masks, boxes, w, h
 
+print('creating directories')
 #create test_dir, valid_dir, and test_dir in new path and also create Original and Ground_Truth in each of the three
 for dir_name in sub_directory_list:
     make_check_dir(new_processed_data_path + '\\' + dir_name)
@@ -288,42 +306,63 @@ for dir_name in sub_directory_list:
 
 (train_x, train_y), (valid_x, valid_y), (test_x, test_y) = load_data(data_file_path)
 original_files_list = [train_x, valid_x, test_x]
+print('number of valid training images: ', len(train_x))
+print('number of valid validation images: ', len(valid_x))
+print('number of valid testing images: ', len(test_x))
+print('Total number of valid images: ', len(train_x) + len(valid_x) + len(test_x))
+print('number of valid training masks: ', len(train_y))
+print('number of valid validation masks: ', len(valid_y))
+print('number of valid testing masks: ', len(test_y))
+print('Total number of valid masks: ', len(train_y) + len(valid_y) + len(test_y))
+print('copying Originals')
 #copy Originals without any modifications using shutil
 for i, dir_name in enumerate(sub_directory_list):
     original_file_paths = original_files_list[i]
     copy_path = new_processed_data_path + '\\' + dir_name + '\\' + sub_sub_directory_list[1] #'Original'
-    for file_path in original_file_paths:
+    print('Copying files in ' + dir_name)
+    time.sleep(0.1) # without delay the progress bar becomes a bit messed up
+    for file_path in tqdm.tqdm(original_file_paths):
         shutil.copy(file_path, copy_path)
 
+print('Copying Ground_Truth and Running Preprocessing')
 #copy masks and also do processing to produce object annotation files(numpy array, .npy) that stores object mask,
-#copy Originals without any modifications using shutil
+#copy Ground_Truth without any modifications using shutil
 for i, dir_name in enumerate(sub_directory_list):
+    print('Current Directory: ' + str(dir_name))
+    print('Directory Progress: ' + str(i+1) + '/' + str(len(sub_directory_list)))
     original_file_paths = original_files_list[i]
     copy_path = new_processed_data_path + '\\' + dir_name + '\\' + sub_sub_directory_list[0] #'Ground_Truth'
-    for file_path in original_file_paths:
-        shutil.copy(file_path, copy_path) #copy mask file
+    with tqdm.tqdm(total=len(original_file_paths)) as pbar:
+        for j, file_path in tqdm.tqdm(enumerate(original_file_paths), position=0, leave=True):
+            # print('Current Directory: ' + str(dir_name))
+            # print('Image Progress: ' + str(j+1) + '/' + str(len(original_file_paths)))
+            shutil.copy(file_path, copy_path) #copy mask file
 
-        #file_name = os.path.basename(file_path)
-        file_name, file_extension = os.path.splitext(file_path)
-        #file_id = file_name[:-4] #remove the '.png' from file_name
-        box_masks, boxes, w, h = extract_bboxes(file_path)
-        num_objects = len(boxes)
+            #file_name = os.path.basename(file_path)
+            # print('file_path', file_path)
+            file_name_with_extension = os.path.basename(file_path)
+            file_name, file_extension = os.path.splitext(file_name_with_extension)
+            # print('file_name', file_name)
+            #file_id = file_name[:-4] #remove the '.png' from file_name
+            box_masks, boxes, w, h = extract_bboxes(file_path)
+            num_objects = len(boxes)
 
-        #data storage format for each object
-        # [[min_x, min_y, max_x, max_y], (box_mask 2D numpy array)] => unit
-        # box mask 2D array consists of shape  (row, col) => ((max_y - min_y + 1),(max_x - min_x + 1)) 0 for background 1 for text
-        # each image has format of np.array([[image_w, image_h], unit1, unit2, unit3, ...]) => image_list
-        # number of objects in one image == len(image_list) - 1 (first element of list contains image width and height)
-        image_list = []
-        image_list.append([w, h])
-        for object_num in range(num_objects):
-            unit_list = []
-            [min_x, min_y, max_x, max_y] = boxes[object_num]
-            bounding_box_list = np.array([min_x, min_y, max_x, max_y])
-            box_mask = box_masks[object_num]
-            unit_list.append(bounding_box_list)
-            unit_list.append(box_mask)
-        numpy_array_image = np.array(image_list, dtype=object)
-        numpy_array_image_name = copy_path + '\\' + file_name + '_annotation.npy'
-        np.save(numpy_array_image_name, numpy_array_image)
-
+            #data storage format for each object
+            # [[min_x, min_y, max_x, max_y], (box_mask 2D numpy array)] => unit
+            # box mask 2D array consists of shape  (row, col) => ((max_y - min_y + 1),(max_x - min_x + 1)) 0 for background 1 for text
+            # each image has format of np.array([[image_w, image_h], unit1, unit2, unit3, ...]) => image_list
+            # number of objects in one image == len(image_list) - 1 (first element of list contains image width and height)
+            image_list = []
+            image_list.append([w, h])
+            for object_num in range(num_objects):
+                unit_list = []
+                [min_x, min_y, max_x, max_y] = boxes[object_num]
+                bounding_box_list = np.array([min_x, min_y, max_x, max_y])
+                box_mask = box_masks[object_num]
+                unit_list.append(bounding_box_list)
+                unit_list.append(box_mask)
+                image_list.append(unit_list)
+            numpy_array_image = np.array(image_list, dtype=object)
+            numpy_array_image_name = copy_path + '\\' + file_name + '_annotation.npy'
+            np.save(numpy_array_image_name, numpy_array_image)
+            pbar.update(1)
