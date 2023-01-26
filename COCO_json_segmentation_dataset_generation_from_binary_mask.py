@@ -39,10 +39,22 @@ import tqdm
 import time
 
 import json #needed for COCO json file generation/manipulation.
+#needed for creating polygons
+from skimage import measure                        # (pip install scikit-image)
+from shapely.geometry import Polygon, MultiPolygon # (pip install Shapely)
+
+#needed to generate datetime
+import datetime
 
 # 18 distinct colors with black and white excluded
 #taken from: https://sashamaps.net/docs/resources/20-colors/
 group_colors = [(230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200), (245, 130, 48), (145, 30, 180), (70, 240, 240), (240, 50, 230), (210, 245, 60), (250, 190, 212), (0, 128, 128), (220, 190, 255), (170, 110, 40), (255, 250, 200), (128, 0, 0), (170, 255, 195), (128, 128, 0), (255, 215, 180), (0, 0, 128), (128, 128, 128)]#, (255, 255, 255), (0, 0, 0)]
+
+source_path = r'.\coco_json_data_gen_test_data_source_20230125'
+dest_path = r'.\coco_json_data_gen_test_destination_20230125'
+
+coco_data_set_name = dest_path[2:] + '_coco_dataset.json'
+dest_subdir_name = ['Original', 'Colored_Ground_Truth'] #First should be the original images, the second should be the masks/ground_truth data with different colors
 
 data_file_path = r'.\combined_dataset_checked_additonal_exclusions_1'#r'.\combined_dataset_checked'
 new_processed_data_path = data_file_path + '_COCO_img_seg_dataset_format'
@@ -53,15 +65,54 @@ MIN_DISTANCE = 5 #3 #any distance greater than MIN_DISTANCE will result in separ
 
 sub_directory_list = ['train_dir', 'valid_dir', 'test_dir']
 sub_sub_directory_list = ['Ground_Truth', 'Original']
-delete_dir_when_run = True
+current_datetime = datetime.datetime.now()
+## COCO data format
+info =\
+    {
+        "year": int,
+        "version": str,
+        "description": str,
+        "contributor": str,
+        "url": str,
+        "date_created": current_datetime,
+}
 
-# Delete Directory if is previously exists (in order to prevent previous runs messing with current run of program)
-if delete_dir_when_run:
-    if os.path.exists(new_processed_data_path):
-        shutil.rmtree(new_processed_data_path)
-        print(f"{new_processed_data_path} has been deleted")
-    else:
-        print(f"{new_processed_data_path} does not exist.")
+image = \
+    {
+        "id": int,
+        "width": int,
+        "height": int,
+        "file_name": str,
+        "license": int,
+        "flickr_url": str,
+        "coco_url": str,
+        "date_captured": current_datetime,
+}
+
+annotation = \
+    {
+        "id": int,
+        "image_id": int,
+        "category_id": int,
+        "segmentation": RLE or [polygon],
+        "area": float,
+        "bbox": [x,y,width,height],
+        "iscrowd": 0 or 1,
+}
+
+license = \
+    {
+        "id": int,
+        "name": str,
+        "url": str,
+}
+
+categories = {
+    "id": int,
+    "name": str,
+    "supercategory": str,
+}
+
 
 def make_check_dir(check_file_path):
     isExist = os.path.exists(check_file_path)
@@ -330,39 +381,95 @@ def extract_bboxes(filename):
       box_masks.append(object_mask)
     return box_masks, boxes, w, h
 
-print('creating directories')
-#create test_dir, valid_dir, and test_dir in new path and also create Original and Ground_Truth in each of the three
-for dir_name in sub_directory_list:
-    make_check_dir(new_processed_data_path + '\\' + dir_name)
-    for sub_dir in sub_sub_directory_list:
-        make_check_dir(new_processed_data_path + '\\' + dir_name + '\\' + sub_dir)
+# Take objects and their bounding boxes extracted from extract_bboxes() to give a colored version of the mask
+def colored_mask_generator(original_mask: np.array, input_boxes: list):
+    colored_mask = original_mask.copy() #original mask is a numpy array from cv2, copy original so that it is not affected
+    number_of_objects = len(input_boxes)
+    for i in range(number_of_objects):
+        [min_x, min_y, max_x, max_y] = input_boxes[i]
+        # Get the pixels within the boundary that are white
+        mask = np.all(colored_mask[min_y:max_y + 1, min_x:max_x + 1] == [255, 255, 255], axis=-1)
+        # Change the value of the white pixels to the specified color
+        colored_mask[min_y:max_y + 1, min_x:max_x + 1][mask] = group_colors[i]
+    return colored_mask
+
+# Takes object mask taken from extract_bboxes() to create annotation for coco json
+# Reference Code: https://www.immersivelimit.com/tutorials/create-coco-annotations-from-scratch
+def create_annotation_from_partial_mask(partial_mask, image_id, category_id, annotation_id, is_crowd):
+    # Find contours (boundary lines) around each partial_mask
+    # Sometimes there can be multiple contours for objects as text is not always connected.
+
+    #add zero padding to partial_mask as contours cannot handle cases where mask touches edge
+    (width, height) = np.shape(partial_mask)
+    padded_mask = np.zeros((width + 2, height + 2))
+    padded_mask[1:width+2, 1:height+2] = partial_mask
+    contours = measure.find_contours(padded_mask, 0.5, positive_orientation='low')
+
+    segmentations = []
+    polygons = []
+    for contour in contours:
+        # Flip from (row, col) representation to (x, y)
+        # and subtract the padding pixel
+        for i in range(len(contour)):
+            row, col = contour[i]
+            contour[i] = (col - 1, row - 1)
+
+        #Make polygon and simplify
+        poly = Polygon(contour)
+        poly = poly.simplify(1.0, preserve_topology=False)
+        polygons.append(poly)
+        segmentation = np.array(poly.exterior.coords).ravel().tolist()
+        segmentations.append(segmentation)
+
+    # Combine the polygons to calculate the bounding box and area
+    multi_poly = MultiPolygon(polygons)
+    x, y, max_x, max_y = multi_poly.bounds
+    width = max_x - x
+    height = max_y - y
+    bbox = (x, y, width, height)
+    area = multi_poly.area
+
+    annotation = {
+        'segmentation': segmentations,
+        'iscrowd': is_crowd,
+        'image_id': image_id,
+        'category_id': category_id,
+        'id': annotation_id,
+        'bbox': bbox,
+        'area': area
+    }
+
+    return annotation
+
+print('creating directories if it does not exist')
+#create Original and Ground_Truth the destination path
+for dir_name in dest_subdir_name :
+    make_check_dir(os.path.join(dest_path, dir_name))
+
 
 (train_x, train_y), (valid_x, valid_y), (test_x, test_y) = load_data(data_file_path)
+images_list = sorted(glob(os.path.join(source_path, "Original\\*")))
+masks_list = sorted(glob(os.path.join(source_path, "Ground_Truth\\*")))
+
+# All the file names for images and mask should be identical in both name and order
+assert [os.path.basename(x) for x in images_list] == [os.path.basename(x) for x in masks_list], 'All the file names for images and mask should be identical in both name and order'
+
+
 original_files_list = [train_x, valid_x, test_x]
 mask_files_list =[train_y, valid_y, test_y]
-print('number of valid training images: ', len(train_x))
-print('number of valid validation images: ', len(valid_x))
-print('number of valid testing images: ', len(test_x))
-print('Total number of valid images: ', len(train_x) + len(valid_x) + len(test_x))
-print('number of valid training masks: ', len(train_y))
-print('number of valid validation masks: ', len(valid_y))
-print('number of valid testing masks: ', len(test_y))
-print('Total number of valid masks: ', len(train_y) + len(valid_y) + len(test_y))
+
 print('copying Originals')
 #copy Originals without any modifications using shutil
-for i, dir_name in enumerate(sub_directory_list):
-    original_file_paths = original_files_list[i]
-    copy_path = new_processed_data_path + '\\' + dir_name + '\\' + sub_sub_directory_list[1] #'Original'
-    print('Copying files in ' + dir_name)
-    time.sleep(0.1) # without delay the progress bar becomes a bit messed up
-    for file_path in tqdm.tqdm(original_file_paths):
-        shutil.copy(file_path, copy_path)
+time.sleep(0.1) # without delay the progress bar becomes a bit messed up
+for file_path in tqdm.tqdm(images_list):
+    copy_path = os.path.join(dest_path, os.path.basename(file_path))
+    shutil.copy(file_path, copy_path)
 
-print('Copying Ground_Truth and Running Preprocessing')
+print('Running preprocessing (clustering objects in image) and generating COCO dataset')
 #copy masks and also do processing to produce object annotation files(numpy array, .npy) that stores object mask,
 #copy Ground_Truth without any modifications using shutil
 
-total_iter = sum([len(x) for x in mask_files_list])
+total_iter = len(masks_list)
 print(total_iter)
 time.sleep(0.1) #delay added to stop print from interfering with tqdm progress bar
 with tqdm.tqdm(total=total_iter) as pbar:
@@ -406,3 +513,12 @@ with tqdm.tqdm(total=total_iter) as pbar:
             numpy_array_image_name = copy_path + '\\' + file_name + '_annotation.npy'
             np.save(numpy_array_image_name, numpy_array_image)
             pbar.update(1)
+
+output_dataset =\
+    {
+        "info": info,
+        "categories": [categories]
+        "images": [image],
+        "annotations": [annotation],
+        "licenses": [license],
+}
