@@ -48,7 +48,7 @@ import datetime
 
 # 18 distinct colors with black and white excluded
 #taken from: https://sashamaps.net/docs/resources/20-colors/
-import COCO_json_segmentation_dataset_generation_from_binary_mask
+# import COCO_json_segmentation_dataset_generation_from_binary_mask
 
 group_colors = [(230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200), (245, 130, 48), (145, 30, 180), (70, 240, 240), (240, 50, 230), (210, 245, 60), (250, 190, 212), (0, 128, 128), (220, 190, 255), (170, 110, 40), (255, 250, 200), (128, 0, 0), (170, 255, 195), (128, 128, 0), (255, 215, 180), (0, 0, 128), (128, 128, 128)]#, (255, 255, 255), (0, 0, 0)]
 
@@ -77,7 +77,7 @@ info =\
         "description": str,
         "contributor": str,
         "url": str,
-        "date_created": current_datetime,
+        "date_created": str #current_datetime,
 }
 
 image = \
@@ -89,7 +89,7 @@ image = \
         "license": int,
         "flickr_url": str,
         "coco_url": str,
-        "date_captured": current_datetime,
+        "date_captured": str #current_datetime,
 }
 
 annotation = \
@@ -385,13 +385,21 @@ def extract_bboxes(filename):
     return box_masks, boxes, w, h
 
 # Take objects and their bounding boxes extracted from extract_bboxes() to give a colored version of the mask
-def colored_mask_generator(original_mask: np.array, input_boxes: list):
+# input_masks consist of list of 2D binary arrays where 1 corresponds to object, 0 corresponds to background
+# input_boxes consist of list of lists with each list being [min_x, min_y, max_x, max_y] of each object
+# input_masks, input_boxes are taken from the outputs of extract_bboxes
+def colored_mask_generator(original_mask: np.array, input_masks: list, input_boxes: list):
     colored_mask = original_mask.copy() #original mask is a numpy array from cv2, copy original so that it is not affected
     number_of_objects = len(input_boxes)
     for i in range(number_of_objects):
+        empty_object_img = np.zeros((original_mask.shape[0], original_mask.shape[1], 3), dtype=np.uint8)
         [min_x, min_y, max_x, max_y] = input_boxes[i]
+        binary_image = input_masks[i]
+        channel_expanded_input_mask = np.repeat(binary_image[:, :, np.newaxis], 3, axis=2)
+        empty_object_img[min_y:max_y + 1, min_x:max_x + 1] = channel_expanded_input_mask
+
         # Get the pixels within the boundary that are white
-        mask = np.all(colored_mask[min_y:max_y + 1, min_x:max_x + 1] == [255, 255, 255], axis=-1)
+        mask = np.all(empty_object_img[min_y:max_y + 1, min_x:max_x + 1] == [1, 1, 1], axis=-1)
         # Change the value of the white pixels to the specified color
         colored_mask[min_y:max_y + 1, min_x:max_x + 1][mask] = group_colors[i]
     return colored_mask
@@ -404,8 +412,14 @@ def create_annotation_from_partial_mask(partial_mask, image_id, category_id, ann
 
     #add zero padding to partial_mask as contours cannot handle cases where mask touches edge
     (rows, cols) = np.shape(partial_mask)
-    padded_mask = np.zeros((rows + 2, cols + 2))
-    padded_mask[1:rows+2, 1:cols+2] = partial_mask
+    padded_mask = np.zeros((rows + 2, cols + 2), dtype=int)
+    # print('np.shape(partial_mask)', np.shape(partial_mask))
+    # print('np.shape(padded_mask)', np.shape(padded_mask))
+    # print('rows + 2, cols + 2', rows + 2, cols + 2)
+
+    padded_mask[1:rows + 1, 1:cols + 1] = partial_mask
+    # print('partial_mask\n', partial_mask)
+    # print('padded_mask\n', padded_mask)
     contours = measure.find_contours(padded_mask, 0.5, positive_orientation='low')
 
     segmentations = []
@@ -462,7 +476,7 @@ print('copying Originals')
 #copy Originals without any modifications using shutil
 time.sleep(0.1) # without delay the progress bar becomes a bit messed up
 for file_path in tqdm.tqdm(images_list):
-    copy_path = os.path.join(dest_path, os.path.basename(file_path))
+    copy_path = os.path.join(dest_path, dest_subdir_name[0], os.path.basename(file_path))
     shutil.copy(file_path, copy_path)
 
 print('Collect Original image data for COCO dataset')
@@ -511,32 +525,27 @@ with tqdm.tqdm(total=total_iter) as pbar:
     for i in range(total_iter):
         file_path = masks_list[i]
         file_base_name = os.path.basename(file_path)
-        box_masks, boxes, w, h = extract_bboxes(file_path)
         original_mask = cv2.imread(file_path)
-        is_mask_black = (cv2.countNonZero(original_mask[:, :, 0]) == 0) # just check the first channel as cv2.countNonZero works only for single channel images
-        num_objects = len(boxes)
-        if GEN_COLORED_MASK:
-            if is_mask_black: # if mask is black(i.e. empty) no need to generate colored mask just copy empty file
-                shutil.copy(file_path, os.path.join(dest_path,dest_subdir_name[1], file_base_name))
-            else:
-                colored_mask = colored_mask_generator(original_mask, box_masks)
-                # dest_path//dest_subsir_name[1](Colored_Mask)//file_name.png
-                cv2.imwrite(os.path.join(dest_path,dest_subdir_name[1], file_base_name), colored_mask)
-        if is_mask_black:
+        is_mask_black = (cv2.countNonZero(original_mask[:, :, 0]) == 0)  # just check the first channel as cv2.countNonZero works only for single channel images
+        if is_mask_black:  # mask/Ground_Truth is completely black
+            if GEN_COLORED_MASK:  # if mask is black(i.e. empty) no need to generate colored mask just copy empty file
+                shutil.copy(file_path, os.path.join(dest_path, dest_subdir_name[1], file_base_name))
             pbar.update(1)
-            continue
-        #data storage format for each object
-        # [[min_x, min_y, max_x, max_y], (box_mask 2D numpy array)] => unit
-        # box mask 2D array consists of shape  (row, col) => ((max_y - min_y + 1),(max_x - min_x + 1)) 0 for background 1 for text
-        # each image has format of np.array([[image_w, image_h], unit1, unit2, unit3, ...]) => image_list
-        # number of objects in one image == len(image_list) - 1 (first element of list contains image width and height)
-        image_list = []
-        image_list.append([w, h])
-        for object_num in range(num_objects):
-            object_annotation = create_annotation_from_partial_mask(box_masks[object_num] ,image_id=i ,category_id=category_id ,annotation_id=annotation_id ,is_crowd=is_crowd)
-            annotation_id = annotation_id + 1
-            coco_annotation_list.append(object_annotation)
-        pbar.update(1)
+        else:
+            box_masks, boxes, w, h = extract_bboxes(file_path)
+            if GEN_COLORED_MASK:
+                colored_mask = colored_mask_generator(original_mask, box_masks, boxes)
+                # dest_path//dest_subdir_name[1](Colored_Mask)//file_name.png
+                cv2.imwrite(os.path.join(dest_path, dest_subdir_name[1], file_base_name), colored_mask)
+
+            num_objects = len(boxes)
+
+
+            for object_num in range(num_objects):
+                object_annotation = create_annotation_from_partial_mask(box_masks[object_num] ,image_id=i ,category_id=category_id ,annotation_id=annotation_id ,is_crowd=is_crowd)
+                annotation_id = annotation_id + 1
+                coco_annotation_list.append(object_annotation)
+            pbar.update(1)
 coco_info = \
     {
         "year": datetime.date.today().year, # 2023
@@ -544,7 +553,7 @@ coco_info = \
         "description": 'A COCO dataset generated using COCO_json_segmentation_dataset_generation_from_binary_mask.py from original directory {}'.format(source_path),
         "contributor": 'kmcho2019', #GitHub id
         "url": r'https://github.com/kmcho2019/Webtoon_Image_Segmentation_and_In_Painting_for_Text',
-        "date_created": current_datetime,
+        "date_created": str(current_datetime),
 }
 
 
