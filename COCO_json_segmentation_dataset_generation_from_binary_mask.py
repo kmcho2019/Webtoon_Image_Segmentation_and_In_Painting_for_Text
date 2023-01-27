@@ -48,6 +48,8 @@ import datetime
 
 # 18 distinct colors with black and white excluded
 #taken from: https://sashamaps.net/docs/resources/20-colors/
+import COCO_json_segmentation_dataset_generation_from_binary_mask
+
 group_colors = [(230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200), (245, 130, 48), (145, 30, 180), (70, 240, 240), (240, 50, 230), (210, 245, 60), (250, 190, 212), (0, 128, 128), (220, 190, 255), (170, 110, 40), (255, 250, 200), (128, 0, 0), (170, 255, 195), (128, 128, 0), (255, 215, 180), (0, 0, 128), (128, 128, 128)]#, (255, 255, 255), (0, 0, 0)]
 
 source_path = r'.\coco_json_data_gen_test_data_source_20230125'
@@ -62,6 +64,7 @@ np.random.seed(42)
 INIT_CENTERS = 1
 MAX_CENTERS = 18 # max capable by x-means is 20 but, only 18 is used because 18 colors are used to separate groups
 MIN_DISTANCE = 5 #3 #any distance greater than MIN_DISTANCE will result in separate objects
+GEN_COLORED_MASK = True # Generates colored version of mask/Ground_Truth File at dest_subdir Colored_Ground_Truth when True
 
 sub_directory_list = ['train_dir', 'valid_dir', 'test_dir']
 sub_sub_directory_list = ['Ground_Truth', 'Original']
@@ -94,10 +97,10 @@ annotation = \
         "id": int,
         "image_id": int,
         "category_id": int,
-        "segmentation": RLE or [polygon],
+        "segmentation": list, #RLE or [polygon],
         "area": float,
-        "bbox": [x,y,width,height],
-        "iscrowd": 0 or 1,
+        "bbox": list, #[x,y,width,height],
+        "iscrowd": int #0 or 1,
 }
 
 license = \
@@ -400,9 +403,9 @@ def create_annotation_from_partial_mask(partial_mask, image_id, category_id, ann
     # Sometimes there can be multiple contours for objects as text is not always connected.
 
     #add zero padding to partial_mask as contours cannot handle cases where mask touches edge
-    (width, height) = np.shape(partial_mask)
-    padded_mask = np.zeros((width + 2, height + 2))
-    padded_mask[1:width+2, 1:height+2] = partial_mask
+    (rows, cols) = np.shape(partial_mask)
+    padded_mask = np.zeros((rows + 2, cols + 2))
+    padded_mask[1:rows+2, 1:cols+2] = partial_mask
     contours = measure.find_contours(padded_mask, 0.5, positive_orientation='low')
 
     segmentations = []
@@ -455,9 +458,6 @@ masks_list = sorted(glob(os.path.join(source_path, "Ground_Truth\\*")))
 assert [os.path.basename(x) for x in images_list] == [os.path.basename(x) for x in masks_list], 'All the file names for images and mask should be identical in both name and order'
 
 
-original_files_list = [train_x, valid_x, test_x]
-mask_files_list =[train_y, valid_y, test_y]
-
 print('copying Originals')
 #copy Originals without any modifications using shutil
 time.sleep(0.1) # without delay the progress bar becomes a bit messed up
@@ -465,60 +465,113 @@ for file_path in tqdm.tqdm(images_list):
     copy_path = os.path.join(dest_path, os.path.basename(file_path))
     shutil.copy(file_path, copy_path)
 
+print('Collect Original image data for COCO dataset')
+coco_image_list = []
+#mock image dictionary from COCO dataset
+#{"id":0,"license":1,"file_name":"94_png.rf.af4c070c32db598db1bee46b3503c07b.jpg","height":640,"width":640,"date_captured":"2023-01-15T12:09:02+00:00"}
+time.sleep(0.1)
+image_total_iter = len(images_list)
+license_id = 1 #license id for the images
+with tqdm.tqdm(total=image_total_iter) as pbar:
+    for i in range(image_total_iter):
+        file_path = images_list[i]
+        file_base_name = os.path.basename(file_path)
+        original_image = cv2.imread(file_path)
+        (original_image_height, original_image_width, _) = np.shape(original_image)
+        # Contain time elapsed since EPOCH in float
+        ti_c = os.path.getctime(file_path)
+        ti_m = os.path.getmtime(file_path)
+        # Converting the time in seconds to a timestamp
+        c_ti = time.ctime(ti_c)
+        m_ti = time.ctime(ti_m)
+        image_dict = {
+            'id': i,
+            'license': license_id, #just set uniform license placeholder for now
+            'file_name': file_base_name,
+            'height': original_image_height,
+            'width': original_image_width,
+            'date_captured': c_ti # Use file creation date instead of last modification date
+        }
+        coco_image_list.append(image_dict)
+        pbar.update(1)
+
+
+
 print('Running preprocessing (clustering objects in image) and generating COCO dataset')
 #copy masks and also do processing to produce object annotation files(numpy array, .npy) that stores object mask,
 #copy Ground_Truth without any modifications using shutil
-
+coco_annotation_list = []
 total_iter = len(masks_list)
 print(total_iter)
 time.sleep(0.1) #delay added to stop print from interfering with tqdm progress bar
+annotation_id = 0
+is_crowd = 0
+category_id = 1 # 0 is for background and 1 is for text, as all annotation is text fix id to 1
 with tqdm.tqdm(total=total_iter) as pbar:
-    for i, dir_name in enumerate(sub_directory_list):
-        # print('Current Directory: ' + str(dir_name))
-        # print('Directory Progress: ' + str(i+1) + '/' + str(len(sub_directory_list)))
-        original_file_paths = mask_files_list[i]
-        copy_path = new_processed_data_path + '\\' + dir_name + '\\' + sub_sub_directory_list[0] #'Ground_Truth'
-
-        for j, file_path in enumerate(original_file_paths):
-            # print('Current Directory: ' + str(dir_name))
-            # print('Image Progress: ' + str(j+1) + '/' + str(len(original_file_paths)))
-            shutil.copy(file_path, copy_path) #copy mask file
-
-            #file_name = os.path.basename(file_path)
-            # print('file_path', file_path)
-            file_name_with_extension = os.path.basename(file_path)
-            file_name, file_extension = os.path.splitext(file_name_with_extension)
-            # print('file_name', file_name)
-            #file_id = file_name[:-4] #remove the '.png' from file_name
-            # print(file_path)
-            box_masks, boxes, w, h = extract_bboxes(file_path)
-            num_objects = len(boxes)
-
-            #data storage format for each object
-            # [[min_x, min_y, max_x, max_y], (box_mask 2D numpy array)] => unit
-            # box mask 2D array consists of shape  (row, col) => ((max_y - min_y + 1),(max_x - min_x + 1)) 0 for background 1 for text
-            # each image has format of np.array([[image_w, image_h], unit1, unit2, unit3, ...]) => image_list
-            # number of objects in one image == len(image_list) - 1 (first element of list contains image width and height)
-            image_list = []
-            image_list.append([w, h])
-            for object_num in range(num_objects):
-                unit_list = []
-                [min_x, min_y, max_x, max_y] = boxes[object_num]
-                bounding_box_list = np.array([min_x, min_y, max_x, max_y])
-                box_mask = box_masks[object_num]
-                unit_list.append(bounding_box_list)
-                unit_list.append(box_mask)
-                image_list.append(unit_list)
-            numpy_array_image = np.array(image_list, dtype=object)
-            numpy_array_image_name = copy_path + '\\' + file_name + '_annotation.npy'
-            np.save(numpy_array_image_name, numpy_array_image)
+    for i in range(total_iter):
+        file_path = masks_list[i]
+        file_base_name = os.path.basename(file_path)
+        box_masks, boxes, w, h = extract_bboxes(file_path)
+        original_mask = cv2.imread(file_path)
+        is_mask_black = (cv2.countNonZero(original_mask[:, :, 0]) == 0) # just check the first channel as cv2.countNonZero works only for single channel images
+        num_objects = len(boxes)
+        if GEN_COLORED_MASK:
+            if is_mask_black: # if mask is black(i.e. empty) no need to generate colored mask just copy empty file
+                shutil.copy(file_path, os.path.join(dest_path,dest_subdir_name[1], file_base_name))
+            else:
+                colored_mask = colored_mask_generator(original_mask, box_masks)
+                # dest_path//dest_subsir_name[1](Colored_Mask)//file_name.png
+                cv2.imwrite(os.path.join(dest_path,dest_subdir_name[1], file_base_name), colored_mask)
+        if is_mask_black:
             pbar.update(1)
+            continue
+        #data storage format for each object
+        # [[min_x, min_y, max_x, max_y], (box_mask 2D numpy array)] => unit
+        # box mask 2D array consists of shape  (row, col) => ((max_y - min_y + 1),(max_x - min_x + 1)) 0 for background 1 for text
+        # each image has format of np.array([[image_w, image_h], unit1, unit2, unit3, ...]) => image_list
+        # number of objects in one image == len(image_list) - 1 (first element of list contains image width and height)
+        image_list = []
+        image_list.append([w, h])
+        for object_num in range(num_objects):
+            object_annotation = create_annotation_from_partial_mask(box_masks[object_num] ,image_id=i ,category_id=category_id ,annotation_id=annotation_id ,is_crowd=is_crowd)
+            annotation_id = annotation_id + 1
+            coco_annotation_list.append(object_annotation)
+        pbar.update(1)
+coco_info = \
+    {
+        "year": datetime.date.today().year, # 2023
+        "version": 1,
+        "description": 'A COCO dataset generated using COCO_json_segmentation_dataset_generation_from_binary_mask.py from original directory {}'.format(source_path),
+        "contributor": 'kmcho2019', #GitHub id
+        "url": r'https://github.com/kmcho2019/Webtoon_Image_Segmentation_and_In_Painting_for_Text',
+        "date_created": current_datetime,
+}
 
+
+coco_category_list =[
+    {
+        "id": category_id,  # 1 normally can be changed
+        "name": "text",
+        "supercategory": "text"
+    }
+]
+
+coco_license_list = [
+    {
+        "id": license_id,
+        "name": 'PLACEHOLDER NOT DETERMINED YET',
+        "url": 'PLACEHOLDER NOT DETERMINED YET'
+    }
+]
 output_dataset =\
     {
-        "info": info,
-        "categories": [categories]
-        "images": [image],
-        "annotations": [annotation],
-        "licenses": [license],
+        "info": coco_info, #info,
+        "categories": coco_category_list, #[categories],
+        "images": coco_image_list, #[image],
+        "annotations": coco_annotation_list, #[annotation],
+        "licenses": coco_license_list #[license]
 }
+
+# Write the JSON data to a file
+with open(os.path.join(dest_path, coco_data_set_name), 'w') as json_file:
+    json.dump(output_dataset, json_file)
