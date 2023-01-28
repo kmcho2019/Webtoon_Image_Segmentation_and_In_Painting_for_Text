@@ -414,13 +414,15 @@ def colored_mask_generator(original_mask: np.array, input_masks: list, input_box
 
 # Takes object mask taken from extract_bboxes() to create annotation for coco json
 # Reference Code: https://www.immersivelimit.com/tutorials/create-coco-annotations-from-scratch
-def create_annotation_from_partial_mask(partial_mask, image_id, category_id, annotation_id, is_crowd):
+def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, category_id, annotation_id, is_crowd):
     # Find contours (boundary lines) around each partial_mask
     # Sometimes there can be multiple contours for objects as text is not always connected.
 
+    [mask_min_x, mask_min_y, mask_max_x, mask_max_y] = bounding_box # relative position of partial_mask in respect of entire image
+
     #add zero padding to partial_mask as contours cannot handle cases where mask touches edge
     (rows, cols) = np.shape(partial_mask)
-    padded_mask = np.zeros((rows + 2, cols + 2), dtype=int)
+    padded_mask = np.zeros((rows + 2, cols + 2), dtype=np.uint8) # np.uint8 as it caused errors in cv2.findContours
     # print('np.shape(partial_mask)', np.shape(partial_mask))
     # print('np.shape(padded_mask)', np.shape(padded_mask))
     # print('rows + 2, cols + 2', rows + 2, cols + 2)
@@ -428,8 +430,51 @@ def create_annotation_from_partial_mask(partial_mask, image_id, category_id, ann
     padded_mask[1:rows + 1, 1:cols + 1] = partial_mask
     # print('partial_mask\n', partial_mask)
     # print('padded_mask\n', padded_mask)
-    contours = measure.find_contours(padded_mask, 0.5, positive_orientation='low')
+    # converted_padded_mask = np.array(padded_mask, dtype=np.uint8) # added due to errors
+    print(padded_mask)
+    # plt.imshow(padded_mask)
+    # plt.show()
+    cv2_contours, _ = cv2.findContours(padded_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
+    points = []
+    x_coordinate_list = []
+    y_coordinate_list = []
+    object_area = 0
+    for contour in cv2_contours:
+        epsilon = 0.01 * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
+        object_area = object_area + cv2.contourArea(approx)
+        restored_approx = np.subtract(approx, 1) # subtract all coordinates x and y by one to account for padding
+        partial_points = restored_approx.ravel().tolist()
+        #move the coordinates to the entire object's position in image
+        # needed as the current coordinates are based on just the object, not the entire image
+        partial_points = [mask_min_x + x if i % 2 == 0 else mask_min_y + x for i, x in enumerate(partial_points)]
+
+        points.append(partial_points)
+
+        x_coordinate_list = x_coordinate_list + restored_approx.ravel().tolist()[0::2]
+        y_coordinate_list = x_coordinate_list + restored_approx.ravel().tolist()[1::2]
+
+    print(points)
+
+    cv2_min_x = min(x_coordinate_list)
+    cv2_max_x = max(x_coordinate_list)
+    cv2_min_y = min(y_coordinate_list)
+    cv2_max_y = max(y_coordinate_list)
+    cv2_width = cv2_max_x - cv2_min_x
+    cv2_height = cv2_max_y - cv2_min_y
+    print('cv2_points\n', points)
+    print('\ncv2_min_x, cv2_min_y, cv2_max_x, cv2_max_y',cv2_min_x, cv2_min_y, cv2_max_x, cv2_max_y)
+    print('\ncv2_area', object_area)
+    cv2_contour_point_num = 0
+    for sub_list in points:
+        cv2_contour_point_num = cv2_contour_point_num + len(sub_list)
+    print('cv2_contour_point_num', cv2_contour_point_num)
+    segmentations = points
+    bbox = (cv2_min_x + mask_min_x, cv2_min_y + mask_min_y, cv2_width, cv2_height)
+
+    contours = measure.find_contours(padded_mask, 0.5, positive_orientation='low')
+    print('\ncontours\n', len(contours))
     segmentations = []
     polygons = []
     for contour in contours:
@@ -437,22 +482,34 @@ def create_annotation_from_partial_mask(partial_mask, image_id, category_id, ann
         # and subtract the padding pixel
         for i in range(len(contour)):
             row, col = contour[i]
-            contour[i] = (col - 1, row - 1)
+            # move the coordinates to the entire object's position in image
+            # needed as the current coordinates are based on just the object, not the entire image
+            contour[i] = (col - 1 + mask_min_x, row - 1 + mask_min_y)
+
 
         #Make polygon and simplify
         poly = Polygon(contour)
+        # print('\npoly\n', poly)
         poly = poly.simplify(1.0, preserve_topology=False)
         polygons.append(poly)
         segmentation = np.array(poly.exterior.coords).ravel().tolist()
-        segmentations.append(segmentation)
 
+        print('\nsegmentation\n', segmentation)
+        segmentations.append(segmentation)
+    print('\nsegmentations\n', segmentations)
     # Combine the polygons to calculate the bounding box and area
     multi_poly = MultiPolygon(polygons)
     x, y, max_x, max_y = multi_poly.bounds
+    print('\nmin_x, min_y, max_x, max_y', x, y, max_x, max_y)
     width = max_x - x
     height = max_y - y
     bbox = (x, y, width, height)
     area = multi_poly.area
+    print('\narea\n', area)
+    contour_point_num = 0
+    for sub_list in segmentations:
+        contour_point_num = contour_point_num + len(sub_list)
+    print('contour_point_num', contour_point_num)
 
     annotation = {
         'segmentation': segmentations,
@@ -552,7 +609,7 @@ with tqdm.tqdm(total=total_iter) as pbar:
 
 
             for object_num in range(num_objects):
-                object_annotation = create_annotation_from_partial_mask(box_masks[object_num], image_id=i, category_id=category_id, annotation_id=annotation_id, is_crowd=is_crowd)
+                object_annotation = create_annotation_from_partial_mask(box_masks[object_num], boxes[object_num], image_id=i, category_id=category_id, annotation_id=annotation_id, is_crowd=is_crowd)
                 if object_annotation['area'] == 0 or np.isnan(object_annotation['bbox']).any():
                     # when object has area of 0, invalid representation of object skip from consideration
                     # or if the object has invalid bbox(containing NaN instead of ints)
