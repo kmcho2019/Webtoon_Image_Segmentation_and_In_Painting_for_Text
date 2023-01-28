@@ -24,6 +24,7 @@ from glob import glob
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import random
+import math #used for math.isnan(i)
 
 import pyclustering
 from pyclustering.cluster import cluster_visualizer
@@ -52,8 +53,8 @@ import datetime
 
 group_colors = [(230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200), (245, 130, 48), (145, 30, 180), (70, 240, 240), (240, 50, 230), (210, 245, 60), (250, 190, 212), (0, 128, 128), (220, 190, 255), (170, 110, 40), (255, 250, 200), (128, 0, 0), (170, 255, 195), (128, 128, 0), (255, 215, 180), (0, 0, 128), (128, 128, 128)]#, (255, 255, 255), (0, 0, 0)]
 
-source_path = r'.\coco_json_data_gen_test_data_source_20230125'
-dest_path = r'.\coco_json_data_gen_test_destination_20230125'
+source_path = r'.\coco_json_data_gen_test_data_source_20230125' #r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
+dest_path = '.\coco_json_data_gen_test_destination_20230125' #r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
 
 coco_data_set_name = dest_path[2:] + '_coco_dataset.json'
 dest_subdir_name = ['Original', 'Colored_Ground_Truth'] #First should be the original images, the second should be the masks/ground_truth data with different colors
@@ -61,9 +62,9 @@ dest_subdir_name = ['Original', 'Colored_Ground_Truth'] #First should be the ori
 data_file_path = r'.\combined_dataset_checked_additonal_exclusions_1'#r'.\combined_dataset_checked'
 new_processed_data_path = data_file_path + '_COCO_img_seg_dataset_format'
 np.random.seed(42)
-INIT_CENTERS = 1
+INIT_CENTERS = 2 #1
 MAX_CENTERS = 18 # max capable by x-means is 20 but, only 18 is used because 18 colors are used to separate groups
-MIN_DISTANCE = 5 #3 #any distance greater than MIN_DISTANCE will result in separate objects
+MIN_DISTANCE = 10 #5 #3 #any distance greater than MIN_DISTANCE will result in separate objects
 GEN_COLORED_MASK = True # Generates colored version of mask/Ground_Truth File at dest_subdir Colored_Ground_Truth when True
 
 sub_directory_list = ['train_dir', 'valid_dir', 'test_dir']
@@ -459,6 +460,8 @@ def create_annotation_from_partial_mask(partial_mask, image_id, category_id, ann
     return annotation
 
 print('creating directories if it does not exist')
+#create destination directory if it does not exist
+make_check_dir(dest_path)
 #create Original and Ground_Truth the destination path
 for dir_name in dest_subdir_name :
     make_check_dir(os.path.join(dest_path, dir_name))
@@ -542,9 +545,16 @@ with tqdm.tqdm(total=total_iter) as pbar:
 
 
             for object_num in range(num_objects):
-                object_annotation = create_annotation_from_partial_mask(box_masks[object_num] ,image_id=i ,category_id=category_id ,annotation_id=annotation_id ,is_crowd=is_crowd)
-                annotation_id = annotation_id + 1
-                coco_annotation_list.append(object_annotation)
+                object_annotation = create_annotation_from_partial_mask(box_masks[object_num], image_id=i, category_id=category_id, annotation_id=annotation_id, is_crowd=is_crowd)
+                if object_annotation['area'] == 0 or any(math.isnan(i) for i in object_annotation['bbox']):
+                    # when object has area of 0, invalid representation of object skip from consideration
+                    # or if the object has invalid bbox(containing NaN instead of ints)
+                    pass
+                else:
+                    # remove empty list from 'segmentation' list of lists
+                    object_annotation['segmentation'] = list(filter(lambda x: x != [], object_annotation['segmentation']))
+                    annotation_id = annotation_id + 1
+                    coco_annotation_list.append(object_annotation)
             pbar.update(1)
 coco_info = \
     {
