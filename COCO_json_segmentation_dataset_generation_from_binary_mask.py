@@ -24,7 +24,7 @@ from glob import glob
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import random
-import math #used for math.isnan(i)
+# import math #used for math.isnan(i)
 
 import pyclustering
 from pyclustering.cluster import cluster_visualizer
@@ -53,8 +53,15 @@ import datetime
 
 group_colors = [(230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200), (245, 130, 48), (145, 30, 180), (70, 240, 240), (240, 50, 230), (210, 245, 60), (250, 190, 212), (0, 128, 128), (220, 190, 255), (170, 110, 40), (255, 250, 200), (128, 0, 0), (170, 255, 195), (128, 128, 0), (255, 215, 180), (0, 0, 128), (128, 128, 128)]#, (255, 255, 255), (0, 0, 0)]
 
-source_path = r'.\coco_json_data_gen_test_data_source_20230125' #r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
-dest_path = '.\coco_json_data_gen_test_destination_20230125' #r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
+# source_path = r'.\coco_json_data_gen_test_data_source_20230125' #r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
+# dest_path = '.\coco_json_data_gen_test_destination_20230125' #r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
+
+# source_path = r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
+# dest_path = r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
+
+source_path = r'.\coco_json_debug_20230128_source'
+dest_path = r'.\coco_json_debug_20230128_destination'
+
 
 coco_data_set_name = dest_path[2:] + '_coco_dataset.json'
 dest_subdir_name = ['Original', 'Colored_Ground_Truth'] #First should be the original images, the second should be the masks/ground_truth data with different colors
@@ -546,7 +553,7 @@ with tqdm.tqdm(total=total_iter) as pbar:
 
             for object_num in range(num_objects):
                 object_annotation = create_annotation_from_partial_mask(box_masks[object_num], image_id=i, category_id=category_id, annotation_id=annotation_id, is_crowd=is_crowd)
-                if object_annotation['area'] == 0 or any(math.isnan(i) for i in object_annotation['bbox']):
+                if object_annotation['area'] == 0 or np.isnan(object_annotation['bbox']).any():
                     # when object has area of 0, invalid representation of object skip from consideration
                     # or if the object has invalid bbox(containing NaN instead of ints)
                     pass
