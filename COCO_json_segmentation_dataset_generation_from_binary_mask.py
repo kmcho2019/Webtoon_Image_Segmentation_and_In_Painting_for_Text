@@ -430,8 +430,10 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
     padded_mask[1:rows + 1, 1:cols + 1] = partial_mask
     # print('partial_mask\n', partial_mask)
     # print('padded_mask\n', padded_mask)
-    # converted_padded_mask = np.array(padded_mask, dtype=np.uint8) # added due to errors
-    print(padded_mask)
+
+    # print(padded_mask)
+    #### Original Implementation Start, not from reference website:
+    '''
     # plt.imshow(padded_mask)
     # plt.show()
     cv2_contours, _ = cv2.findContours(padded_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -455,7 +457,7 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
         x_coordinate_list = x_coordinate_list + restored_approx.ravel().tolist()[0::2]
         y_coordinate_list = x_coordinate_list + restored_approx.ravel().tolist()[1::2]
 
-    print(points)
+    # print(points)
 
     cv2_min_x = min(x_coordinate_list)
     cv2_max_x = max(x_coordinate_list)
@@ -463,18 +465,21 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
     cv2_max_y = max(y_coordinate_list)
     cv2_width = cv2_max_x - cv2_min_x
     cv2_height = cv2_max_y - cv2_min_y
-    print('cv2_points\n', points)
-    print('\ncv2_min_x, cv2_min_y, cv2_max_x, cv2_max_y',cv2_min_x, cv2_min_y, cv2_max_x, cv2_max_y)
-    print('\ncv2_area', object_area)
+    # print('cv2_points\n', points)
+    # print('\ncv2_min_x, cv2_min_y, cv2_max_x, cv2_max_y',cv2_min_x, cv2_min_y, cv2_max_x, cv2_max_y)
+    # print('\ncv2_area', object_area)
     cv2_contour_point_num = 0
     for sub_list in points:
         cv2_contour_point_num = cv2_contour_point_num + len(sub_list)
-    print('cv2_contour_point_num', cv2_contour_point_num)
+    # print('cv2_contour_point_num', cv2_contour_point_num)
     segmentations = points
     bbox = (cv2_min_x + mask_min_x, cv2_min_y + mask_min_y, cv2_width, cv2_height)
+    '''
+    #### Original Implementation End
+
 
     contours = measure.find_contours(padded_mask, 0.5, positive_orientation='low')
-    print('\ncontours\n', len(contours))
+    # print('\ncontours\n', len(contours))
     segmentations = []
     polygons = []
     for contour in contours:
@@ -494,22 +499,22 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
         polygons.append(poly)
         segmentation = np.array(poly.exterior.coords).ravel().tolist()
 
-        print('\nsegmentation\n', segmentation)
+        # print('\nsegmentation\n', segmentation)
         segmentations.append(segmentation)
-    print('\nsegmentations\n', segmentations)
+    # print('\nsegmentations\n', segmentations)
     # Combine the polygons to calculate the bounding box and area
     multi_poly = MultiPolygon(polygons)
     x, y, max_x, max_y = multi_poly.bounds
-    print('\nmin_x, min_y, max_x, max_y', x, y, max_x, max_y)
+    # print('\nmin_x, min_y, max_x, max_y', x, y, max_x, max_y)
     width = max_x - x
     height = max_y - y
     bbox = (x, y, width, height)
     area = multi_poly.area
-    print('\narea\n', area)
+    # print('\narea\n', area)
     contour_point_num = 0
     for sub_list in segmentations:
         contour_point_num = contour_point_num + len(sub_list)
-    print('contour_point_num', contour_point_num)
+    # print('contour_point_num', contour_point_num)
 
     annotation = {
         'segmentation': segmentations,
