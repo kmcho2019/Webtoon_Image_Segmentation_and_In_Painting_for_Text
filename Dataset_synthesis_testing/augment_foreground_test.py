@@ -4,6 +4,11 @@ import random
 import matplotlib.pyplot as plt
 import sys
 
+def count_num_points_in_contour(contours):
+    total_count = 0
+    for contour in contours:
+        total_count = total_count + len(contour)
+    return total_count
 # rotation_angle maximum amount of angle that foreground is rotated
 # distortion_scale image size scaled by 1 - distortion_scale ~ 1 + distortion_scale
 def augment_foreground(foreground, background, rotation_angle=45, reduction_scale = 0.8, expansion_scale= 0.8, crop_limit = 0.4, min_foreground_opaqueness = 0.5):
@@ -16,7 +21,31 @@ def augment_foreground(foreground, background, rotation_angle=45, reduction_scal
     x_scale = random.uniform(reduction_scale, 1 + expansion_scale)
     y_scale = random.uniform(reduction_scale, 1 + expansion_scale)
     distorted_foreground = cv2.resize(rotated_foreground, None, fx=x_scale, fy=y_scale, interpolation=cv2.INTER_CUBIC)
+    # apply non-linear remapping using trigonometry functions sine and cosine reference: https://bkshin.tistory.com/entry/OpenCV-15-%EB%A6%AC%EB%A7%A4%ED%95%91Remapping-%EC%98%A4%EB%AA%A9%EB%B3%BC%EB%A1%9D-%EB%A0%8C%EC%A6%88-%EC%99%9C%EA%B3%A1Lens-Distortion-%EB%B0%A9%EC%82%AC-%EC%99%9C%EA%B3%A1Radial-Distortion
+    x_wave_length = random.randint(1, 20)
+    y_wave_length = random.randint(1, 20)
+    x_amplitude = random.uniform(1,5)
+    y_amplitude = random.uniform(1,5)
 
+    # prevent outliers from distorting image too much
+    if x_wave_length * y_wave_length < 10:
+        x_wave_length = random.randint(5, 20)
+        y_wave_length = random.randint(5, 20)
+    if x_amplitude * y_amplitude > 15:
+        x_amplitude = random.uniform(1, 3)
+        y_amplitude = random.uniform(1, 3)
+    x_wave_length = 3
+    y_wave_length = 1
+    x_amplitude = 1
+    y_amplitude = 5
+    temp_rows, temp_cols = distorted_foreground.shape[:2]
+    # remap-1: form preliminary mapping array
+    map_y, map_x = np.indices((temp_rows, temp_cols), dtype=np.float32)
+    # remap-2: calculate distortion mapping using sine and cosine functions
+    sin_x = map_x + x_amplitude * np.sin(map_y/x_wave_length)
+    cos_y = map_y + y_amplitude * np.sin(map_x/y_wave_length)
+    # remap-3: map image
+    distorted_foreground = cv2.remap(distorted_foreground, sin_x, cos_y, cv2.INTER_LINEAR, None, cv2.BORDER_REPLICATE)
     view = cv2.cvtColor(distorted_foreground, cv2.COLOR_BGR2RGBA)
     plt.imshow(view)
     plt.show()
@@ -44,13 +73,14 @@ def augment_foreground(foreground, background, rotation_angle=45, reduction_scal
     overlay_foreground = cv2.copyMakeBorder(cropped_foreground, top_padding, bottom_padding,left_padding,right_padding,cv2.BORDER_CONSTANT,None, value=0 )
     print(np.shape(background), np.shape(overlay_foreground))
     print(x_offset, y_offset)
-    plt.imshow(distorted_foreground[:,:,3])
-    plt.show()
+    # plt.imshow(distorted_foreground[:,:,3])
+    # plt.show()
     # draw contour based on alpha, but cv2.findContours need a binary image, binarize as resized foreground is not binary due to interpolation/resizing
-    binarize_alpha = np.vectorize(lambda x: 0 if x == 0 else 255)
+    binarize_alpha = np.vectorize(lambda x: 0 if x < 100 else 255)
     binary_contour_map_image = binarize_alpha(overlay_foreground[:,:,3])
     binary_contour_map_image = binary_contour_map_image.astype(np.uint8)
-    contours, hierarchy = cv2.findContours(binary_contour_map_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
+    contours, hierarchy = cv2.findContours(binary_contour_map_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)#cv2.CHAIN_APPROX_TC89_KCOS)
+    faster_contours, _ = cv2.findContours(binary_contour_map_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
     # overlayed[y_offset:y_offset + fg_rows, x_offset:x_offset + fg_cols] = distorted_foreground
 
     # set opaqueness of foreground between range
@@ -73,6 +103,48 @@ def augment_foreground(foreground, background, rotation_angle=45, reduction_scal
     view_combined_image = cv2.cvtColor(combined_image,cv2.COLOR_BGR2RGB)
     plt.imshow(view_combined_image)
     plt.show()
+
+    #check contours by drawing them
+    contour_image = cv2.drawContours(np.copy(combined_image), contours, -1, (0,0,255))
+    view_combined_image = cv2.cvtColor(contour_image,cv2.COLOR_BGR2RGB)
+    plt.imshow(view_combined_image)
+    plt.show()
+    simplified_contours = []
+    for contour in contours:
+        # found that for a larger image smaller epsilon is needed, so make epsilon inversely proportional to x/y_scale
+        epsilon = (1/(x_scale * y_scale))* 0.005 * cv2.arcLength(contour, True) #0.01 * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
+        if len(approx) > 2:
+            simplified_contours.append(approx)
+
+    print('len(contours)', len(contours))
+    print('contours size', count_num_points_in_contour(contours))
+    print('len(simplified_contours)', len(simplified_contours))
+    print('simplified_contours size', count_num_points_in_contour(simplified_contours))
+    new_contour_image = cv2.drawContours(np.copy(combined_image), simplified_contours, -1, (0,255,0))
+    new_view_combined_image = cv2.cvtColor(new_contour_image,cv2.COLOR_BGR2RGB)
+    plt.imshow(new_view_combined_image)
+    plt.show()
+    # no simplification but just remove any len 1 or 2 contours
+    truncated_contours = []
+    for contour in contours:
+        if len(contour) > 2:
+            truncated_contours.append(contour)
+    print('len(truncated_contours)', len(truncated_contours))
+    print('truncated_contours size', count_num_points_in_contour(truncated_contours))
+
+    truncated_contour_image = cv2.drawContours(np.copy(combined_image), simplified_contours, -1, (255,0,0))
+    truncated_view_combined_image = cv2.cvtColor(truncated_contour_image,cv2.COLOR_BGR2RGB)
+    plt.imshow(truncated_view_combined_image)
+    plt.show()
+    faster_contour_image = cv2.drawContours(np.copy(combined_image), faster_contours, -1, (255,255,0))
+    faster_view_combined_image = cv2.cvtColor(faster_contour_image,cv2.COLOR_BGR2RGB)
+    plt.imshow(faster_view_combined_image)
+    plt.show()
+    print('len(faster_contours)', len(faster_contours))
+    print('faster_contours size', count_num_points_in_contour(faster_contours))
+    # plt.imshow(cv2.cvtColor(combined_image,cv2.COLOR_BGR2RGB))
+    # plt.show()
     # Get the outer contour positions of the augmented foreground on the background
     binary = cv2.cvtColor(overlayed, cv2.COLOR_BGR2GRAY)
     # _, contours, hierarchy = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
@@ -80,8 +152,9 @@ def augment_foreground(foreground, background, rotation_angle=45, reduction_scal
     for contour in contours:
         for position in contour:
             contour_positions.append([position[0][0] + x_offset, position[0][1] + y_offset])
-    
+
     return overlayed, contour_positions
+# distortion https://bkshin.tistory.com/entry/OpenCV-15-%EB%A6%AC%EB%A7%A4%ED%95%91Remapping-%EC%98%A4%EB%AA%A9%EB%B3%BC%EB%A1%9D-%EB%A0%8C%EC%A6%88-%EC%99%9C%EA%B3%A1Lens-Distortion-%EB%B0%A9%EC%82%AC-%EC%99%9C%EA%B3%A1Radial-Distortion
 # np.set_printoptions(threshold=sys.maxsize)
 # image = cv2.copyMakeBorder(src, top, bottom, left, right, borderType) # image padding function
 # https://bkshin.tistory.com/entry/OpenCV-15-%EB%A6%AC%EB%A7%A4%ED%95%91Remapping-%EC%98%A4%EB%AA%A9%EB%B3%BC%EB%A1%9D-%EB%A0%8C%EC%A6%88-%EC%99%9C%EA%B3%A1Lens-Distortion-%EB%B0%A9%EC%82%AC-%EC%99%9C%EA%B3%A1Radial-Distortion
@@ -100,7 +173,8 @@ test = cv2.copyMakeBorder(test, 10, 50,50,50,cv2.BORDER_CONSTANT,None, value=0 )
 # plt.imshow(test)
 # plt.show()
 # cv2.imwrite('crop_test.png', test)
-# plt.imshow(foreground)
+
+# plt.imshow(cv2.cvtColor(background, cv2.COLOR_BGR2RGB))
 # plt.show()
 # plt.imshow(background)
 # plt.show()
