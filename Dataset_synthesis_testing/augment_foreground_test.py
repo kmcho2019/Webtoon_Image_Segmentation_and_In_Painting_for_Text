@@ -28,16 +28,17 @@ def augment_foreground(foreground, background, rotation_angle=45, reduction_scal
     y_amplitude = random.uniform(1,5)
 
     # prevent outliers from distorting image too much
-    if x_wave_length * y_wave_length < 10:
+    # found that if amplitude large and wave length is small at the same time image more difficult to recognize
+    # also found that it is fine if only one axis has high amplitude/wave_length ratio but problematic if both axis have high ratio
+    # therefore make it so that if both axis have high ratio reduce limit ranges and run again
+    if x_amplitude/x_wave_length > 4 and y_amplitude/y_wave_length > 4:
         x_wave_length = random.randint(5, 20)
         y_wave_length = random.randint(5, 20)
-    if x_amplitude * y_amplitude > 15:
         x_amplitude = random.uniform(1, 3)
         y_amplitude = random.uniform(1, 3)
-    x_wave_length = 3
-    y_wave_length = 1
-    x_amplitude = 1
-    y_amplitude = 5
+
+
+
     temp_rows, temp_cols = distorted_foreground.shape[:2]
     # remap-1: form preliminary mapping array
     map_y, map_x = np.indices((temp_rows, temp_cols), dtype=np.float32)
