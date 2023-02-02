@@ -56,11 +56,11 @@ group_colors = [(230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200), (24
 # source_path = r'.\coco_json_data_gen_test_data_source_20230125' #r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
 # dest_path = '.\coco_json_data_gen_test_destination_20230125' #r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
 
-# source_path = r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
-# dest_path = r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
+source_path = r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
+dest_path = r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
 
-source_path = r'.\coco_json_debug_20230128_source'
-dest_path = r'.\coco_json_debug_20230128_destination'
+# source_path = r'.\coco_json_debug_20230128_source'
+# dest_path = r'.\coco_json_debug_20230128_destination'
 
 
 coco_data_set_name = dest_path[2:] + '_coco_dataset.json'
