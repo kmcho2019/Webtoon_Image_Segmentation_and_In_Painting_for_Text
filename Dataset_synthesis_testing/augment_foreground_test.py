@@ -4,16 +4,20 @@ import random
 import matplotlib.pyplot as plt
 import sys
 
-# draw a rotated line as kernel, then apply a convolution filter to an image with that kernel.
-#refernce:https://stackoverflow.com/questions/40305933/how-to-add-motion-blur-to-numpy-array
-#size - in pixels, size of motion blur
-#angel - in degrees, direction of motion blur
-def apply_motion_blur(image, size, angle):
-    k = np.zeros((size, size), dtype=np.float32)
-    k[ (size-1)// 2 , :] = np.ones(size, dtype=np.float32)
-    k = cv2.warpAffine(k, cv2.getRotationMatrix2D( (size / 2 -0.5 , size / 2 -0.5 ) , angle, 1.0), (size, size) )
-    k = k * ( 1.0 / np.sum(k) )
-    return cv2.filter2D(image, -1, k)
+def DEBUG_view_cv2_image_array(image_arr):
+    if image_arr.ndim == 2: # Black and white image
+        plt.imshow(image_arr)
+        plt.show()
+    elif image_arr.ndim == 3: # Conventional color image
+        if image_arr.shape[2] == 4: # alpha channel exists
+            view = cv2.cvtColor(image_arr, cv2.COLOR_BGRA2RGBA)
+        else:
+            view = cv2.cvtColor(image_arr, cv2.COLOR_BGR2RGB)
+        plt.imshow(view)
+        plt.show()
+    else:
+        print('Input shape is not correct')
+        print(np.shape(image_arr))
 
 
 # used to count the number of points in a contour
@@ -43,50 +47,150 @@ def is_there_no_bbox_collision(pre_existing_bboxes:list, candidate_bbox:list)-> 
                 return False
         return True
 
-# perform the image augmentation of foreground and also performs the overlaying process
-# which is done using alpha blending process
-# various augmentations include stretching, rotation, distortion, et cetera
-def augment_and_overlay_images(foreground, background, rotation_angle=45, reduction_scale = 0.8, expansion_scale= 0.8, crop_limit = 0.4, min_foreground_opaqueness = 0.5):
+# needed for contourIntersect as the function requires cv2 format contours
+# works for only external contours
+# input is a segmentation which stores contour in form of consecutive points of lists
+def segmentation_list_2_cv2_contour_format(segmentation):
+    tuple_input = [] # inserted to be converted to a tuple
+    for connected_section in segmentation:
+        points_for_section = []
+        for i in range(len(connected_section) // 2):
+            point = connected_section[2 * i:2 * i + 2]
+            point = [point]
+            points_for_section.append(point)
+        tuple_input.append(np.array(points_for_section, dtype=np.int32))
+    return tuple(tuple_input)
+
+# check if two contours intersect or not
+# run when is_there_no_bbox_collision() is triggered
+# makes a much more detailed look at contours instead of just bounding boxes
+# bounding box is checked first as it is less computationally intensive
+# reference: https://stackoverflow.com/questions/55641425/check-if-two-contours-intersect
+def contourIntersect(original_image_shape, contour1, contour2):
+    if contour1 == [] or contour2 == []: #cannot intersect when one of the contours do not exist
+        return False
+
+    # contour1 = np.array(contour1).reshape((-1, 1, 2)).astype(np.int32)
+    # contour2 = np.array(contour2).reshape((-1, 1, 2)).astype(np.int32)
+    # Two separate contours trying to check intersection on
+    contours = [contour1, contour2]
+    contours = contour1 + contour2
+    contours = segmentation_list_2_cv2_contour_format(contours)
+    contour1_converted = segmentation_list_2_cv2_contour_format(contour1)
+    contour2_converted = segmentation_list_2_cv2_contour_format(contour2)
+
+    # print('contour1', contour1)
+    # print('contour2', contour2)
+    # print('contours', contours)
+    # Create image filled with zeros the same size of original image
+    print(original_image_shape)
+    blank = np.zeros(original_image_shape)
+
+    # Copy each contour into its own image and fill it with '1'
+    image1 = cv2.drawContours(blank.copy(), contour1_converted, -1, 1)
+    image2 = cv2.drawContours(blank.copy(), contour2_converted, -1, 1)
+    DEBUG_view_cv2_image_array(image1)
+    DEBUG_view_cv2_image_array(image2)
+    # Use the logical AND operation on the two images
+    # Since the two images had bitwise and applied to it,
+    # there should be a '1' or 'True' where there was intersection
+    # and a '0' or 'False' where it didnt intersect
+    intersection = np.logical_and(image1, image2)
+    DEBUG_view_cv2_image_array(intersection)
+    print(intersection.any())
+    # Check if there was a '1' in the intersection
+    return intersection.any()
+
+# rotates foreground +/- max_rotation_angle
+def apply_rotation(foreground, max_rotation_angle):
     rows, cols, channels = foreground.shape
     # Apply random rotation to foreground
-    rotation_matrix = cv2.getRotationMatrix2D((cols / 2, rows / 2), random.uniform(-rotation_angle, rotation_angle), 1)
+    rotation_matrix = cv2.getRotationMatrix2D((cols / 2, rows / 2), random.uniform(-max_rotation_angle, max_rotation_angle), 1)
     rotated_foreground = cv2.warpAffine(foreground, rotation_matrix, (cols, rows))
+    return rotated_foreground
 
-    # Apply random scaling and distortion to the foreground
-    x_scale = random.uniform(reduction_scale, 1 + expansion_scale)
-    y_scale = random.uniform(reduction_scale, 1 + expansion_scale)
-    distorted_foreground = cv2.resize(rotated_foreground, None, fx=x_scale, fy=y_scale, interpolation=cv2.INTER_CUBIC)
-    # Apply non-linear remapping using trigonometry functions sine and cosine reference: https://bkshin.tistory.com/entry/OpenCV-15-%EB%A6%AC%EB%A7%A4%ED%95%91Remapping-%EC%98%A4%EB%AA%A9%EB%B3%BC%EB%A1%9D-%EB%A0%8C%EC%A6%88-%EC%99%9C%EA%B3%A1Lens-Distortion-%EB%B0%A9%EC%82%AC-%EC%99%9C%EA%B3%A1Radial-Distortion
-    x_wave_length = random.randint(1, 20)
-    y_wave_length = random.randint(1, 20)
-    x_amplitude = random.uniform(1,5)
-    y_amplitude = random.uniform(1,5)
+# apply linear x and y scaling to foreground
+# x and y scaling is applied separately and scaling lies between min_reduced_scale ~ (1 + max_expanded_scale)
+def apply_linear_scaling(foreground, min_reduced_scale, max_expanded_scale):
+    x_scale = random.uniform(min_reduced_scale, 1 + max_expanded_scale)
+    y_scale = random.uniform(min_reduced_scale, 1 + max_expanded_scale)
+    scaled_foreground = cv2.resize(foreground, None, fx=x_scale, fy=y_scale, interpolation=cv2.INTER_CUBIC)
+    return scaled_foreground
+
+# apply sine and cosine scaling to x and y-axis
+# randomly assigns wavelength and amplitude for both of the axis
+# the wave length and amplitude range is given by max_wave_length and max_amplitude respectively
+def apply_sine_cosine_distortion(foreground, max_wave_length=40, max_amplitude=5):
+    x_wave_length = random.randint(1, max_wave_length)
+    y_wave_length = random.randint(1, max_wave_length)
+    x_amplitude = random.uniform(1,max_amplitude)
+    y_amplitude = random.uniform(1,max_amplitude)
 
     # prevent outliers from distorting image too much
     # found that if amplitude large and wave length is small at the same time image more difficult to recognize
     # also found that it is fine if only one axis has high amplitude/wave_length ratio but problematic if both axis have high ratio
     # therefore make it so that if both axis have high ratio reduce limit ranges and run again
-    if x_amplitude/x_wave_length > 4 and y_amplitude/y_wave_length > 4:
-        x_wave_length = random.randint(5, 20)
-        y_wave_length = random.randint(5, 20)
-        x_amplitude = random.uniform(1, 3)
-        y_amplitude = random.uniform(1, 3)
+    if x_amplitude/x_wave_length > 3.5 and y_amplitude/y_wave_length > 3.5:
+        x_wave_length = random.randint(5, max_wave_length)
+        y_wave_length = random.randint(5, max_wave_length)
+        x_amplitude = random.uniform(1, int(max_amplitude) // 2)
+        y_amplitude = random.uniform(1, int(max_amplitude) // 2)
 
-    temp_rows, temp_cols = distorted_foreground.shape[:2]
+    temp_rows, temp_cols = foreground.shape[:2]
     # remap-1: form preliminary mapping array
     map_y, map_x = np.indices((temp_rows, temp_cols), dtype=np.float32)
     # remap-2: calculate distortion mapping using sine and cosine functions
     sin_x = map_x + x_amplitude * np.sin(map_y/x_wave_length)
     cos_y = map_y + y_amplitude * np.sin(map_x/y_wave_length)
     # remap-3: map image
-    distorted_foreground = cv2.remap(distorted_foreground, sin_x, cos_y, cv2.INTER_LINEAR, None, cv2.BORDER_REPLICATE)
-    view = cv2.cvtColor(distorted_foreground, cv2.COLOR_BGR2RGBA)
-    plt.imshow(view)
-    plt.show()
-    print('foreground shape', np.shape(foreground))
-    print('distorted_foreground shape', np.shape(distorted_foreground))
+    distorted_foreground = cv2.remap(foreground, sin_x, cos_y, cv2.INTER_LINEAR, None, cv2.BORDER_REPLICATE)
+    return distorted_foreground
+
+# draw a rotated line as kernel, then apply a convolution filter to an image with that kernel.
+#refernce:https://stackoverflow.com/questions/40305933/how-to-add-motion-blur-to-numpy-array
+#size - in pixels, size of motion blur
+#angel - in degrees, direction of motion blur
+# application_prob - probability of blur effect being applied
+def apply_motion_blur(image, application_prob = 0.4):
+    h, w, _ = np.shape(image)
+    max_size = int(min(h, w) // 10) # max motion blur is set as 10 % of minimum axis size
+    size_choice_array = [i for i in range(1, max_size + 1)] # need to add one to max_size to include it in choice array
+    # if size is 1 then blur effect is not applied
+    size_prob_array = [1-application_prob] + [round((application_prob / (len(size_choice_array)-1)), 4)] * (len(size_choice_array)-1)
+    size_prob_array[0] = round(size_prob_array[0] + 1 - sum(size_prob_array), 4)
+    # print(size_prob_array)
+    # print(size_choice_array)
+    # print(sum(size_prob_array))
+    # size = random.randint(1, max_size)
+    # select size within size_choice_array probability distribution based on size_prob_array
+    size = np.random.choice(np.array(size_choice_array),None,True,p=np.array(size_prob_array))
+    angle = random.uniform(-180, 180)
+    k = np.zeros((size, size), dtype=np.float32)
+    k[ (size-1)// 2 , :] = np.ones(size, dtype=np.float32)
+    k = cv2.warpAffine(k, cv2.getRotationMatrix2D( (size / 2 -0.5 , size / 2 -0.5 ) , angle, 1.0), (size, size) )
+    k = k * ( 1.0 / np.sum(k) )
+    return cv2.filter2D(image, -1, k)
+
+# perform the image augmentation of foreground and also performs the overlaying process
+# which is done using alpha blending process
+# various augmentations include stretching, rotation, distortion, et cetera
+def augment_and_overlay_images(foreground, background, rotation_angle=45, reduction_scale = 0.8, expansion_scale= 0.8, crop_limit = 0.4, min_foreground_opaqueness = 0.7):
+    # Apply random rotation to foreground within (-rotation_angle, rotation_angle)
+    rotated_foreground = apply_rotation(foreground, rotation_angle)
+    # Apply random scaling and distortion to the foreground
+    scaled_foreground = apply_linear_scaling(rotated_foreground, reduction_scale, expansion_scale)
+    # Apply non-linear remapping using trigonometry functions sine and cosine reference: https://bkshin.tistory.com/entry/OpenCV-15-%EB%A6%AC%EB%A7%A4%ED%95%91Remapping-%EC%98%A4%EB%AA%A9%EB%B3%BC%EB%A1%9D-%EB%A0%8C%EC%A6%88-%EC%99%9C%EA%B3%A1Lens-Distortion-%EB%B0%A9%EC%82%AC-%EC%99%9C%EA%B3%A1Radial-Distortion
+    distorted_foreground = apply_sine_cosine_distortion(scaled_foreground,max_wave_length=40, max_amplitude=5)
+    # DEBUG_view_cv2_image_array(distorted_foreground)
+    print('distorted_foreground shape',np.shape(distorted_foreground))
+    motion_blur_foreground = apply_motion_blur(distorted_foreground, application_prob=0.4)
+    # DEBUG_view_cv2_image_array(motion_blur_foreground)
+    # print('If Identical Print False:', np.any(np.subtract(motion_blur_foreground, distorted_foreground))) # used to check if apply_motion_blur changes image when size is 1
+    # augmented_foreground -> foreground after all augmentations have been applied
+
+    augmented_foreground = motion_blur_foreground
     # Randomly assign a position to the foreground on the background
-    fg_rows, fg_cols, fg_channels = distorted_foreground.shape
+    fg_rows, fg_cols, fg_channels = augmented_foreground.shape
     bg_rows, bg_cols, bg_channels = background.shape
     x_offset = random.randint(int(-fg_cols * crop_limit), int(bg_cols - fg_cols * (1 - crop_limit)))
     y_offset = random.randint(int(-fg_rows * crop_limit), int(bg_rows - fg_rows * (1 - crop_limit)))
@@ -100,7 +204,7 @@ def augment_and_overlay_images(foreground, background, rotation_angle=45, reduct
     h_end_idx = inverse_y_offset if inverse_y_offset < 0 else fg_rows
     w_start_idx = abs(x_offset) if x_offset < 0 else 0
     w_end_idx = inverse_x_offset if inverse_x_offset < 0 else fg_cols
-    cropped_foreground = distorted_foreground[h_start_idx:h_end_idx, w_start_idx:w_end_idx, :]
+    cropped_foreground = augmented_foreground[h_start_idx:h_end_idx, w_start_idx:w_end_idx, :]
     overlay_foreground = cv2.copyMakeBorder(cropped_foreground, top_padding, bottom_padding,left_padding,right_padding,cv2.BORDER_CONSTANT,None, value=0 )
 
     # draw contour based on alpha, but cv2.findContours need a binary image, binarize as resized foreground is not binary due to interpolation/resizing
@@ -130,11 +234,13 @@ def augment_and_overlay_images(foreground, background, rotation_angle=45, reduct
 # rotation_angle maximum amount of angle that foreground is rotated
 # distortion_scale image size scaled by 1 - distortion_scale ~ 1 + distortion_scale
 # returns foreground background overlay image and annotation file corresponding to modified foreground
-def augment_foreground(foreground, background, pre_existing_bboxes=None, is_crowd = 0, image_id = 0, category_id = 1, annotation_id = 0, rotation_angle=45, reduction_scale = 0.8, expansion_scale= 0.8, crop_limit = 0.4, min_foreground_opaqueness = 0.5, attempts = 2):
+def augment_foreground(foreground, background, pre_existing_bboxes=None, pre_existing_contours = None, is_crowd = 0, image_id = 0, category_id = 1, annotation_id = 0, rotation_angle=45, reduction_scale = 0.8, expansion_scale= 0.8, crop_limit = 0.4, min_foreground_opaqueness = 0.7, attempts = 2):
     # Randomly rotate the foreground
     # if there is no pre_existing_bboxes set it to empty list
     if pre_existing_bboxes is None:
         pre_existing_bboxes = []
+    if pre_existing_contours is None:
+        pre_existing_contours = []
     # attempts variable refers to amount of tries program makes to accommodate colliding bounding boxes
     while attempts > 0:
         segmentations = []
@@ -142,12 +248,17 @@ def augment_foreground(foreground, background, pre_existing_bboxes=None, is_crow
         y_coordinate_list = []
         area = 0
         combined_image, faster_contours = augment_and_overlay_images(foreground, background, rotation_angle=rotation_angle, reduction_scale = reduction_scale, expansion_scale= expansion_scale, crop_limit = crop_limit, min_foreground_opaqueness = min_foreground_opaqueness)
+        # DEBUG_view_cv2_image_array(cv2.drawContours(combined_image, faster_contours, -1, (255, 0, 0)))
+        # print(faster_contours)
         for contour in faster_contours:
-            area = area + cv2.contourArea(contour)
-            partial_segmentation = contour.ravel().tolist()
-            segmentations.append(partial_segmentation)
-            x_coordinate_list = x_coordinate_list + partial_segmentation[0::2]
-            y_coordinate_list = y_coordinate_list + partial_segmentation[1::2]
+            # print('cv2.contourArea(contour)', cv2.contourArea(contour))
+            # print(len(contour))
+            if len(contour) > 2: # in terms of describing area contour with less than 3 points are not needed
+                area = area + cv2.contourArea(contour)
+                partial_segmentation = contour.ravel().tolist()
+                segmentations.append(partial_segmentation)
+                x_coordinate_list = x_coordinate_list + partial_segmentation[0::2]
+                y_coordinate_list = y_coordinate_list + partial_segmentation[1::2]
         min_x = min(x_coordinate_list)
         max_x = max(x_coordinate_list)
         min_y = min(y_coordinate_list)
@@ -155,18 +266,28 @@ def augment_foreground(foreground, background, pre_existing_bboxes=None, is_crow
         width = max_x - min_x
         height = max_y - min_y
         bbox = [min_x, min_y, width, height]
+        annotation = {
+            'segmentation': segmentations,
+            'iscrowd': is_crowd,
+            'image_id': image_id,
+            'category_id': category_id,
+            'id': annotation_id,
+            'bbox': bbox,
+            'area': area
+        }
         if is_there_no_bbox_collision(pre_existing_bboxes, bbox) is False:
-            attempts = attempts - 1 # try again with attempt after subtracting attempts
+            print('BOUNDING BOX CLIPPING DETECTED, check more precisely with contours')
+            # check again more precisely with contours
+
+            if contourIntersect((combined_image.shape[0], combined_image.shape[1]), pre_existing_contours, segmentations) == True:
+                attempts = attempts - 1 # try again with attempt after subtracting attempts
+                print('CONTOUR CLIPPING DETECTED RERUN, attempts remaining:', attempts)
+                DEBUG_view_cv2_image_array(combined_image)
+            else:
+                # no problem as contour themselves do not intersect
+                print('CONTOUR DOES NOT CLIP, accept current combined_image')
+                return combined_image, annotation
         else:
-            annotation = {
-                'segmentation': segmentations,
-                'iscrowd': is_crowd,
-                'image_id': image_id,
-                'category_id': category_id,
-                'id': annotation_id,
-                'bbox': bbox,
-                'area': area
-            }
             return combined_image, annotation
     # return original background and also return None in place for annotations
     # when number of attempts run out and there are still collisions
@@ -198,5 +319,25 @@ test = cv2.copyMakeBorder(test, 10, 50,50,50,cv2.BORDER_CONSTANT,None, value=0 )
 # plt.show()
 # plt.imshow(background)
 # plt.show()
-overlay, contour_positions = augment_foreground(foreground, background)
+boxes = []
+contour_check_segmentation_accum_list = []
+overlay, annotation = augment_foreground(foreground, background)
+print('annotation_segmentation',annotation['segmentation'])
+print(len(annotation['segmentation']))
+DEBUG_view_cv2_image_array(overlay)
+bbox = annotation['bbox']
+contour_check_segmentation_accum_list = contour_check_segmentation_accum_list + annotation['segmentation']
+boxes.append(bbox)
+print(bbox)
+print(boxes)
+overlay, annotation = augment_foreground(foreground, overlay,pre_existing_bboxes=boxes, pre_existing_contours=contour_check_segmentation_accum_list)
+DEBUG_view_cv2_image_array(overlay)
+if annotation == None:
+    pass
+else:
+    boxes.append(annotation['bbox'])
+    contour_check_segmentation_accum_list = contour_check_segmentation_accum_list + annotation['segmentation']
+overlay, annotation = augment_foreground(foreground, overlay,pre_existing_bboxes=boxes, pre_existing_contours=contour_check_segmentation_accum_list)
+DEBUG_view_cv2_image_array(overlay)
+
 cv2.imwrite('augment_foreground_output.png', overlay)
