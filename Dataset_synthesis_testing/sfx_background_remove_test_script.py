@@ -2,6 +2,9 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 file_path = '.\\test_kwang.png'
+file_path = '.\\test_dung.png'
+file_path = '.\\brightness_check_3.png'
+file_path = '.\\test_dung_alt.png'
 
 def make_transparent_bw(file_path):
     image = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
@@ -65,7 +68,7 @@ white = np.all(image_bgr == [255, 255, 255], axis=-1)
 # change the values of Alpha to 0 for all the white pixels
 image_bgra[white, -1] = 0
 # save the image
-cv2.imwrite('image_bgra.png', image_bgra)
+cv2. imwrite('test_dung_alt_bgra.png', image_bgra) #cv2.imwrite('image_bgra_2.png', image_bgra) # cv2.imwrite('image_bgra.png', image_bgra)
 '''
 result = attempt(file_path)
 print(np.shape(result))

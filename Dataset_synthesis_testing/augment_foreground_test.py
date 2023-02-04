@@ -1,8 +1,23 @@
+# Takes a directory of clean backgrounds and foregrounds(text cutouts) to generate a number of composed image and annotations for them
+# Various augmentations are applied to the text such as linear scaling, rotation, transparency et cetera
+# Also adds clean backgrounds with no foregrounds to provide a null case for the model
+# Conversion to COCO json format is mostly taken from COCO_json_segmentation_dataset_generation_from_binary_mask.py
+
+
+
 import cv2
 import numpy as np
 import random
 import matplotlib.pyplot as plt
 import sys
+import os
+import tqdm
+import shutil
+import time
+import datetime
+import json
+import math
+
 
 def DEBUG_view_cv2_image_array(image_arr):
     if image_arr.ndim == 2: # Black and white image
@@ -83,21 +98,21 @@ def contourIntersect(original_image_shape, contour1, contour2):
     # print('contour2', contour2)
     # print('contours', contours)
     # Create image filled with zeros the same size of original image
-    print(original_image_shape)
+    # print(original_image_shape)
     blank = np.zeros(original_image_shape)
 
     # Copy each contour into its own image and fill it with '1'
     image1 = cv2.drawContours(blank.copy(), contour1_converted, -1, 1)
     image2 = cv2.drawContours(blank.copy(), contour2_converted, -1, 1)
-    DEBUG_view_cv2_image_array(image1)
-    DEBUG_view_cv2_image_array(image2)
+    # DEBUG_view_cv2_image_array(image1)
+    # DEBUG_view_cv2_image_array(image2)
     # Use the logical AND operation on the two images
     # Since the two images had bitwise and applied to it,
     # there should be a '1' or 'True' where there was intersection
     # and a '0' or 'False' where it didnt intersect
     intersection = np.logical_and(image1, image2)
-    DEBUG_view_cv2_image_array(intersection)
-    print(intersection.any())
+    # DEBUG_view_cv2_image_array(intersection)
+    # print(intersection.any())
     # Check if there was a '1' in the intersection
     return intersection.any()
 
@@ -130,7 +145,7 @@ def apply_sine_cosine_distortion(foreground, max_wave_length=40, max_amplitude=5
     # found that if amplitude large and wave length is small at the same time image more difficult to recognize
     # also found that it is fine if only one axis has high amplitude/wave_length ratio but problematic if both axis have high ratio
     # therefore make it so that if both axis have high ratio reduce limit ranges and run again
-    if x_amplitude/x_wave_length > 3.5 and y_amplitude/y_wave_length > 3.5:
+    if x_amplitude/x_wave_length > 3.1 and y_amplitude/y_wave_length > 3.1:
         x_wave_length = random.randint(5, max_wave_length)
         y_wave_length = random.randint(5, max_wave_length)
         x_amplitude = random.uniform(1, int(max_amplitude) // 2)
@@ -171,21 +186,89 @@ def apply_motion_blur(image, application_prob = 0.4):
     k = k * ( 1.0 / np.sum(k) )
     return cv2.filter2D(image, -1, k)
 
+# calculate brightness of image input image where the image has no alpha channel
+# used to calculate brightness of background to compare against that of foreground in apply_brightness_calibration_and_randomize_color
+def no_alpha_image_brightness(image):
+    if len(image.shape) == 3:
+        # Colored RGB or BGR (*Do Not* use HSV images with this function)
+        # create brightness with euclidean norm
+        # if (_, _, 4) == np.shape(image):
+        #     print('Image with alpha transparency should not be used for this function')
+        return np.average(np.linalg.norm(image, axis=2)) / np.sqrt(3)
+    else:
+        # Grayscale
+        return np.average(image)
+
+# calculate brightness of image with alpha/transparency for a subsection of an image where the alpha value exceeds threshold
+def alpha_image_geo_mean_brightness(image, threshold=127):
+    # print(np.shape(image))
+    h, w = image.shape[:2]
+    mask = image[..., 3] >= threshold
+    brightness = np.mean(image[..., :3][mask], axis=(0, 1))
+    test = image[..., :3][mask]
+    test = np.sum(test, axis = 1)
+    test = test.astype(np.float)
+    test = test/3
+    # remove all zeros so that geometric mean can work
+    test = test[test != 0]
+    return np.exp(np.mean(np.log(test)))
+
+# based on background image and image change brightness of foreground if there is too little difference
+# also randomize color of image based on a probability
+def apply_brightness_calibration_and_randomize_color(image, background_brightness, color_change_prob = 0.):
+
+    if background_brightness < 40: # when background brightness is very dim make image brighter
+        B_channel = random.randint(0, 255)
+        G_channel = random.randint(0, 255)
+        R_channel = random.randint(0, 255)
+
+        # continue picking color when color dim as with background, pick again when luminosity is below 80
+        # luminance formula source: https://stackoverflow.com/questions/596216/formula-to-determine-perceived-brightness-of-rgb-color
+        while (0.2126*R_channel + 0.7152*G_channel + 0.0722*B_channel) < 80:
+            B_channel = random.randint(0, 255)
+            G_channel = random.randint(0, 255)
+            R_channel = random.randint(0, 255)
+        image[:, :, 0] = B_channel
+        image[:, :, 1] = G_channel
+        image[:, :, 2] = R_channel
+        mask = image[:, :, 3] > 128
+        image[mask] = [B_channel, G_channel, R_channel, 255]
+    else: # background is relatively bright
+        if random.random() < color_change_prob: # when color change is triggered
+            B_channel = random.randint(0, 255)
+            G_channel = random.randint(0, 255)
+            R_channel = random.randint(0, 255)
+            # continue picking color when color is also bright as with background
+            while math.sqrt((B_channel - 255) **2 + (G_channel - 255) ** 2 + (R_channel - 255) ** 2) < 40:
+                B_channel = random.randint(0, 255)
+                G_channel = random.randint(0, 255)
+                R_channel = random.randint(0, 255)
+            image[:,:,0] = B_channel
+            image[:,:,1] = G_channel
+            image[:,:,2] = R_channel
+            mask = image[:,:,3] > 128
+            image[mask] = [B_channel, G_channel, R_channel, 255]
+    return image
+
 # perform the image augmentation of foreground and also performs the overlaying process
 # which is done using alpha blending process
 # various augmentations include stretching, rotation, distortion, et cetera
 def augment_and_overlay_images(foreground, background, rotation_angle=45, reduction_scale = 0.8, expansion_scale= 0.8, crop_limit = 0.4, min_foreground_opaqueness = 0.7):
+    # Change color of image randomly
+    color_changed_foreground = apply_brightness_calibration_and_randomize_color(image=foreground, background_brightness=no_alpha_image_brightness(background), color_change_prob=0.25)
+
     # Apply random rotation to foreground within (-rotation_angle, rotation_angle)
-    rotated_foreground = apply_rotation(foreground, rotation_angle)
+    rotated_foreground = apply_rotation(color_changed_foreground, rotation_angle)
     # Apply random scaling and distortion to the foreground
     scaled_foreground = apply_linear_scaling(rotated_foreground, reduction_scale, expansion_scale)
     # Apply non-linear remapping using trigonometry functions sine and cosine reference: https://bkshin.tistory.com/entry/OpenCV-15-%EB%A6%AC%EB%A7%A4%ED%95%91Remapping-%EC%98%A4%EB%AA%A9%EB%B3%BC%EB%A1%9D-%EB%A0%8C%EC%A6%88-%EC%99%9C%EA%B3%A1Lens-Distortion-%EB%B0%A9%EC%82%AC-%EC%99%9C%EA%B3%A1Radial-Distortion
     distorted_foreground = apply_sine_cosine_distortion(scaled_foreground,max_wave_length=40, max_amplitude=5)
     # DEBUG_view_cv2_image_array(distorted_foreground)
-    print('distorted_foreground shape',np.shape(distorted_foreground))
+    # print('distorted_foreground shape',np.shape(distorted_foreground))
     motion_blur_foreground = apply_motion_blur(distorted_foreground, application_prob=0.4)
     # DEBUG_view_cv2_image_array(motion_blur_foreground)
     # print('If Identical Print False:', np.any(np.subtract(motion_blur_foreground, distorted_foreground))) # used to check if apply_motion_blur changes image when size is 1
+
     # augmented_foreground -> foreground after all augmentations have been applied
 
     augmented_foreground = motion_blur_foreground
@@ -196,6 +279,15 @@ def augment_and_overlay_images(foreground, background, rotation_angle=45, reduct
     y_offset = random.randint(int(-fg_rows * crop_limit), int(bg_rows - fg_rows * (1 - crop_limit)))
     inverse_x_offset = bg_cols - fg_cols - x_offset # offset measured from the opposite direction of x_offset (measured from right as opposed to being measured from left)
     inverse_y_offset = bg_rows - fg_rows - y_offset # offset measured from the opposite direction of y_offset (measured from bottom as opposed to being measured from top)
+    # if both offset and inverse_offset are negative it means that scale foreground is larger than background problematic
+    # repeat until it is fixed
+    while (x_offset < 0 and inverse_x_offset < 0) or (y_offset < 0 and inverse_y_offset):
+        crop_limit = 0.8 # more aggressive crop_limit to make it fit
+        x_offset = random.randint(int(-fg_cols * crop_limit), int(bg_cols - fg_cols * (1 - crop_limit)))
+        y_offset = random.randint(int(-fg_rows * crop_limit), int(bg_rows - fg_rows * (1 - crop_limit)))
+        inverse_x_offset = bg_cols - fg_cols - x_offset  # offset measured from the opposite direction of x_offset (measured from right as opposed to being measured from left)
+        inverse_y_offset = bg_rows - fg_rows - y_offset  # offset measured from the opposite direction of y_offset (measured from bottom as opposed to being measured from top)
+
     top_padding = y_offset if y_offset > 0 else 0
     bottom_padding = inverse_y_offset if inverse_y_offset > 0 else 0
     right_padding = inverse_x_offset if inverse_x_offset > 0 else 0
@@ -209,6 +301,7 @@ def augment_and_overlay_images(foreground, background, rotation_angle=45, reduct
 
     # draw contour based on alpha, but cv2.findContours need a binary image, binarize as resized foreground is not binary due to interpolation/resizing
     binarize_alpha = np.vectorize(lambda x: 0 if x < 100 else 255)
+    # print('overlay_foreground shape', np.shape(overlay_foreground))
     binary_contour_map_image = binarize_alpha(overlay_foreground[:,:,3])
     binary_contour_map_image = binary_contour_map_image.astype(np.uint8)
     faster_contours, _ = cv2.findContours(binary_contour_map_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
@@ -276,22 +369,144 @@ def augment_foreground(foreground, background, pre_existing_bboxes=None, pre_exi
             'area': area
         }
         if is_there_no_bbox_collision(pre_existing_bboxes, bbox) is False:
-            print('BOUNDING BOX CLIPPING DETECTED, check more precisely with contours')
+            # print('BOUNDING BOX CLIPPING DETECTED, check more precisely with contours')
             # check again more precisely with contours
 
             if contourIntersect((combined_image.shape[0], combined_image.shape[1]), pre_existing_contours, segmentations) == True:
                 attempts = attempts - 1 # try again with attempt after subtracting attempts
-                print('CONTOUR CLIPPING DETECTED RERUN, attempts remaining:', attempts)
-                DEBUG_view_cv2_image_array(combined_image)
+                # print('CONTOUR CLIPPING DETECTED RERUN, attempts remaining:', attempts)
+                # DEBUG_view_cv2_image_array(combined_image)
             else:
                 # no problem as contour themselves do not intersect
-                print('CONTOUR DOES NOT CLIP, accept current combined_image')
+                # print('CONTOUR DOES NOT CLIP, accept current combined_image')
                 return combined_image, annotation
         else:
             return combined_image, annotation
     # return original background and also return None in place for annotations
     # when number of attempts run out and there are still collisions
     return background, None
+
+# uses augment_foreground() to generate composite images and their annotations
+# returns coco_image_list and coco_annotation_list
+def generate_image_and_coco_annotations(foreground_path, background_path, destination_path, max_foreground_num = 5, max_attempts_per_foreground = 3, num_images_per_background = 10, license_id = 1, category_id = 1, is_crowd= 0):
+    if os.path.exists(destination_path):
+        print('destination_path exists no need to create new directory')
+    else:
+        print('destination_path does not exist create new directory')
+        os.makedirs(destination_path)
+
+    foreground_list = os.listdir(foreground_path)
+    background_list = os.listdir(background_path)
+    total_generated_images = len(background_list) * num_images_per_background
+
+    print(f'{len(background_list)} Background Images and {len(foreground_list)} Foreground Images Detected in Directory, Generating {total_generated_images} New Images Based on Multiplier {num_images_per_background} and {len(background_list)} Null Backgrounds')
+    # license_id = 1
+    image_id = 0
+    annotation_id = 0
+    # is_crowd = 0
+    # category_id = 1  # 0 is for background and 1 is for text, as all annotation is text fix id to 1
+    coco_category_list = []
+    coco_image_list = []
+    coco_annotation_list = []
+    coco_license_list = []
+    # first generate empty images(background with no foregrounds) to provide a null case for the model
+    # can be useful in reducing false positives on an empty image
+    print('Generating Empty Images With No Foregrounds to Provide Null Case For the Model')
+    with tqdm.tqdm(total=len(background_list)) as pbar:
+        for i in range(len(background_list)):
+            current_background_path = background_list[i]
+            current_background_filename = os.path.basename(current_background_path)
+            new_background_filename = 'synth_null_background' + '_{:06d}_'.format(image_id) + current_background_filename
+            new_background_path = os.path.join(destination_path, new_background_filename)
+            shutil.copy(current_background_path, new_background_path) # copy background file without any modifications
+            current_background_image = cv2.imread(current_background_path)
+            (image_height, image_width, _) = np.shape(current_background_image)
+            # Contain time elapsed since EPOCH in float
+            ti_c = os.path.getctime(current_background_path)
+            ti_m = os.path.getmtime(current_background_path)
+            # Converting the time in seconds to a timestamp
+            c_ti = time.ctime(ti_c)
+            m_ti = time.ctime(ti_m)
+            image_dict = {
+                'id': image_id,
+                'license': license_id,  # just set uniform license placeholder for now
+                'file_name': new_background_filename,
+                'height': image_height,
+                'width': image_width,
+                'date_captured': c_ti  # Use file creation date instead of last modification date
+            }
+            coco_image_list.append(image_dict)
+            image_id = image_id + 1 # increment image_id after adding it to list
+            pbar.update(1)
+    print(f'Generating {total_generated_images} Composite Images With Maximum of {num_images_per_background} Foregrounds')
+    time.sleep(0.1)
+    with tqdm.tqdm(total=total_generated_images) as pbar:
+        for background_num in range(len(background_list)):
+            current_background_path = background_list[background_num]
+            current_background_filename = os.path.basename(current_background_path)
+            current_background_image = cv2.imread(current_background_path)
+            for generation_num in range(num_images_per_background):
+                new_composite_filename = 'synth_composite_image' + '_{:06d}'.format(image_id) + '_{:03d}_'.format(generation_num) + current_background_filename
+                new_composite_path = os.path.join(destination_path, new_composite_filename)
+                boxes = []
+                contour_check_segmentation_accum_list = []
+
+                for foreground_num in range(max_foreground_num):
+                    current_foreground_path = random.choice(foreground_list) # pick random foreground from directory
+                    current_foreground_image = cv2.imread(current_foreground_path, cv2.IMREAD_UNCHANGED)
+                    # need to use cv2.IMREAD_UNCHANGED as foreground image also has alpha channel
+                    # print('background_num, generation_num, foreground_num', background_num, generation_num, foreground_num)
+                    if foreground_num == 0:
+                        # for first pass use current_background_image as background
+                        composite, current_annotation = augment_foreground(current_foreground_image,
+                                                                           current_background_image,
+                                                                           pre_existing_bboxes=boxes,
+                                                                           pre_existing_contours=contour_check_segmentation_accum_list,
+                                                                           is_crowd= is_crowd,
+                                                                           image_id=image_id,
+                                                                           category_id = category_id,
+                                                                           annotation_id=annotation_id,
+                                                                           attempts=max_attempts_per_foreground)
+                    else:
+                        # use composite image as background
+                        composite, current_annotation = augment_foreground(current_foreground_image,
+                                                                           composite,
+                                                                           pre_existing_bboxes=boxes,
+                                                                           pre_existing_contours=contour_check_segmentation_accum_list,
+                                                                           is_crowd= is_crowd,
+                                                                           image_id=image_id,
+                                                                           category_id = category_id,
+                                                                           annotation_id=annotation_id,
+                                                                           attempts=max_attempts_per_foreground)
+                    # print(generation_num, 'current composite shape', np.shape(composite))
+                    if current_annotation == None:
+                        # if current_annotation is None it means that no annotation was added
+                        pass
+                    else:
+                        boxes.append(current_annotation['bbox'])
+                        contour_check_segmentation_accum_list = contour_check_segmentation_accum_list + current_annotation['segmentation']
+                        coco_annotation_list.append(current_annotation)
+                        annotation_id = annotation_id + 1
+                (composite_image_height, composite_image_width, _) = np.shape(composite)
+                cv2.imwrite(new_composite_path, composite)
+                # Contain time elapsed since EPOCH in float
+                ti_c = os.path.getctime(new_composite_path)
+                ti_m = os.path.getmtime(new_composite_path)
+                # Converting the time in seconds to a timestamp
+                c_ti = time.ctime(ti_c)
+                m_ti = time.ctime(ti_m)
+                image_dict = {
+                    'id': image_id,
+                    'license': license_id,  # just set uniform license placeholder for now
+                    'file_name': new_composite_filename,
+                    'height': composite_image_height,
+                    'width': composite_image_width,
+                    'date_captured': c_ti  # Use file creation date instead of last modification date
+                }
+                coco_image_list.append(image_dict)
+                image_id = image_id + 1  # increment image_id after adding it to list
+                pbar.update(1)
+    return coco_image_list, coco_annotation_list
 
 
 
@@ -324,20 +539,79 @@ contour_check_segmentation_accum_list = []
 overlay, annotation = augment_foreground(foreground, background)
 print('annotation_segmentation',annotation['segmentation'])
 print(len(annotation['segmentation']))
-DEBUG_view_cv2_image_array(overlay)
+# DEBUG_view_cv2_image_array(overlay)
 bbox = annotation['bbox']
 contour_check_segmentation_accum_list = contour_check_segmentation_accum_list + annotation['segmentation']
 boxes.append(bbox)
 print(bbox)
 print(boxes)
 overlay, annotation = augment_foreground(foreground, overlay,pre_existing_bboxes=boxes, pre_existing_contours=contour_check_segmentation_accum_list)
-DEBUG_view_cv2_image_array(overlay)
+# DEBUG_view_cv2_image_array(overlay)
 if annotation == None:
     pass
 else:
     boxes.append(annotation['bbox'])
     contour_check_segmentation_accum_list = contour_check_segmentation_accum_list + annotation['segmentation']
 overlay, annotation = augment_foreground(foreground, overlay,pre_existing_bboxes=boxes, pre_existing_contours=contour_check_segmentation_accum_list)
-DEBUG_view_cv2_image_array(overlay)
+# DEBUG_view_cv2_image_array(overlay)
 
 cv2.imwrite('augment_foreground_output.png', overlay)
+
+license_id = 1
+category_id = 1
+is_crowd = 0
+coco_data_set_name = 'test_coco_dataset.json'
+background_path = r'./test_background'
+text_path = r'./test_sfx_images'
+dest_path = r'./test_destination'
+
+coco_image_list, coco_annotation_list = generate_image_and_coco_annotations(foreground_path=text_path,
+                                                                            background_path=background_path,
+                                                                            destination_path=dest_path,
+                                                                            max_foreground_num=3,
+                                                                            max_attempts_per_foreground=3,
+                                                                            num_images_per_background=3,
+                                                                            license_id=license_id,
+                                                                            category_id=category_id,
+                                                                            is_crowd=is_crowd)
+
+
+current_datetime =  datetime.datetime.now()
+coco_info = \
+    {
+        "year": datetime.date.today().year, # 2023
+        "version": 1,
+        "description": f'A synthetic COCO dataset generated using augment_foreground_test.py from background directory {background_path} and foreground(text) directory {text_path}',
+        "contributor": 'kmcho2019', #GitHub id
+        "url": r'https://github.com/kmcho2019/Webtoon_Image_Segmentation_and_In_Painting_for_Text',
+        "date_created": str(current_datetime),
+}
+
+
+coco_category_list =[
+    {
+        "id": category_id,  # 1 normally can be changed
+        "name": "text",
+        "supercategory": "text"
+    }
+]
+
+coco_license_list = [
+    {
+        "id": license_id,
+        "name": 'PLACEHOLDER NOT DETERMINED YET',
+        "url": 'PLACEHOLDER NOT DETERMINED YET'
+    }
+]
+output_dataset =\
+    {
+        "info": coco_info, #info,
+        "categories": coco_category_list, #[categories],
+        "images": coco_image_list, #[image],
+        "annotations": coco_annotation_list, #[annotation],
+        "licenses": coco_license_list #[license]
+}
+
+# Write the JSON data to a file
+with open(os.path.join(dest_path, coco_data_set_name), 'w') as json_file:
+    json.dump(output_dataset, json_file)
