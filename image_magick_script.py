@@ -6,10 +6,10 @@ import math
 import glob
 import datetime
 
-run_magick_script = True
+run_magick_script = False
 use_combine_panel_mode = False #try to process data even if clean original panel number is different by combining them, tends to produce pretty bad data
 print('run_magick_script', run_magick_script)
-resize_width = 256
+resize_width = 512 #256
 original_file_path = r'.\combined_original'#r'.\VLT_original_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_original_100_105'
 clean_file_path = r'.\combined_clean'#r'.\VLT_clean_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_clean_100_105'
 diff_file_path = r'.\combined_diff' #r'.\VLT_diff_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_diff_100_105'
@@ -17,6 +17,10 @@ diff_slice_file_path = r'.\combined_diff_slice'#r'.\VLT_diff_slice_100_105'#r'C:
 original_resize_file_path = r'.\combined_original_resize' #r'.\VLT_original_224_resize_100_105'
 combined_file_path = r'.\combined_dataset' #r'.\VLT_combined_224_resize_100_105' #stores all of the files in image form, directories Original (for resized original panel) and Grount Truth (for difference)
 directory_name_list = ['100', '101', '102', '103', '104', '105']
+diff_slice_file_path = r'.\combined_diff_slice_size_512'#r'.\VLT_diff_slice_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_diff_slice_100_105'
+original_resize_file_path = r'.\combined_original_resize_size_512' #r'.\VLT_original_224_resize_100_105'
+combined_file_path = r'.\combined_dataset_size_512' #r'.\VLT_combined_224_resize_100_105' #stores all of the files in image form, directories Original (for resized original panel) and Grount Truth (for difference)
+
 output_image_name = directory_name_list[0]
 
 original_dir_list = os.listdir(original_file_path)

@@ -420,7 +420,8 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
 
     [mask_min_x, mask_min_y, mask_max_x, mask_max_y] = bounding_box # relative position of partial_mask in respect of entire image
 
-    #add zero padding to partial_mask as contours cannot handle cases where mask touches edge
+
+    #### Original Implementation Start, not from reference website:
     (rows, cols) = np.shape(partial_mask)
     padded_mask = np.zeros((rows + 2, cols + 2), dtype=np.uint8) # np.uint8 as it caused errors in cv2.findContours
     # print('np.shape(partial_mask)', np.shape(partial_mask))
@@ -428,34 +429,35 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
     # print('rows + 2, cols + 2', rows + 2, cols + 2)
 
     padded_mask[1:rows + 1, 1:cols + 1] = partial_mask
-    # print('partial_mask\n', partial_mask)
-    # print('padded_mask\n', padded_mask)
 
-    # print(padded_mask)
-    #### Original Implementation Start, not from reference website:
-    '''
     # plt.imshow(padded_mask)
     # plt.show()
-    cv2_contours, _ = cv2.findContours(padded_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    cv2_contours, _ = cv2.findContours(padded_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
 
     points = []
     x_coordinate_list = []
     y_coordinate_list = []
-    object_area = 0
+    area = 0
     for contour in cv2_contours:
-        epsilon = 0.01 * cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, epsilon, True)
-        object_area = object_area + cv2.contourArea(approx)
-        restored_approx = np.subtract(approx, 1) # subtract all coordinates x and y by one to account for padding
-        partial_points = restored_approx.ravel().tolist()
-        #move the coordinates to the entire object's position in image
-        # needed as the current coordinates are based on just the object, not the entire image
-        partial_points = [mask_min_x + x if i % 2 == 0 else mask_min_y + x for i, x in enumerate(partial_points)]
+        # epsilon = 0.01 * cv2.arcLength(contour, True)
+        # approx = cv2.approxPolyDP(contour, epsilon, True)
+        # object_area = object_area + cv2.contourArea(approx)
+        # restored_approx = np.subtract(approx, 1) # subtract all coordinates x and y by one to account for padding
+        # partial_points = restored_approx.ravel().tolist()
+        if len(contour) >= 3: # only add only if contour form a discernable area
+            area = area + cv2.contourArea(contour)
+            recalibrated_contour = np.subtract(contour, 1) # subtract all coordinates x and y by one to account for padding
+            partial_points = recalibrated_contour.ravel().tolist()
+            #move the coordinates to the entire object's position in image
+            # needed as the current coordinates are based on just the object, not the entire image
+            x_coordinate_list = x_coordinate_list + partial_points[0::2]
+            y_coordinate_list = x_coordinate_list + partial_points[1::2]
+            # conversion to coco json segmentation format
+            saved_seg_points = [mask_min_x + x if i % 2 == 0 else mask_min_y + x for i, x in enumerate(partial_points)]
 
-        points.append(partial_points)
+            points.append(saved_seg_points)
 
-        x_coordinate_list = x_coordinate_list + restored_approx.ravel().tolist()[0::2]
-        y_coordinate_list = x_coordinate_list + restored_approx.ravel().tolist()[1::2]
+
 
     # print(points)
 
@@ -473,10 +475,23 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
         cv2_contour_point_num = cv2_contour_point_num + len(sub_list)
     # print('cv2_contour_point_num', cv2_contour_point_num)
     segmentations = points
-    bbox = (cv2_min_x + mask_min_x, cv2_min_y + mask_min_y, cv2_width, cv2_height)
-    '''
-    #### Original Implementation End
+    bbox = [cv2_min_x + mask_min_x, cv2_min_y + mask_min_y, cv2_width, cv2_height]
 
+    #### Original Implementation End
+    '''
+    
+    #add zero padding to partial_mask as contours cannot handle cases where mask touches edge
+    (rows, cols) = np.shape(partial_mask)
+    padded_mask = np.zeros((rows + 2, cols + 2), dtype=np.uint8) # np.uint8 as it caused errors in cv2.findContours
+    # print('np.shape(partial_mask)', np.shape(partial_mask))
+    # print('np.shape(padded_mask)', np.shape(padded_mask))
+    # print('rows + 2, cols + 2', rows + 2, cols + 2)
+
+    padded_mask[1:rows + 1, 1:cols + 1] = partial_mask
+    # print('partial_mask\n', partial_mask)
+    # print('padded_mask\n', padded_mask)
+
+    # print(padded_mask)
 
     contours = measure.find_contours(padded_mask, 0.5, positive_orientation='low')
     # print('\ncontours\n', len(contours))
@@ -515,6 +530,7 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
     for sub_list in segmentations:
         contour_point_num = contour_point_num + len(sub_list)
     # print('contour_point_num', contour_point_num)
+    '''
 
     annotation = {
         'segmentation': segmentations,

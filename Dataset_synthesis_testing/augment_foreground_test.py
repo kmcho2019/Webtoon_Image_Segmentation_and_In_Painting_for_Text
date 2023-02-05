@@ -17,7 +17,7 @@ import time
 import datetime
 import json
 import math
-
+import glob
 
 def DEBUG_view_cv2_image_array(image_arr):
     if image_arr.ndim == 2: # Black and white image
@@ -397,6 +397,9 @@ def generate_image_and_coco_annotations(foreground_path, background_path, destin
 
     foreground_list = os.listdir(foreground_path)
     background_list = os.listdir(background_path)
+    foreground_list = glob.glob(os.path.join(foreground_path,'*.png'))
+    background_list = glob.glob(os.path.join(background_path,'*.png'))
+
     total_generated_images = len(background_list) * num_images_per_background
 
     print(f'{len(background_list)} Background Images and {len(foreground_list)} Foreground Images Detected in Directory, Generating {total_generated_images} New Images Based on Multiplier {num_images_per_background} and {len(background_list)} Null Backgrounds')
