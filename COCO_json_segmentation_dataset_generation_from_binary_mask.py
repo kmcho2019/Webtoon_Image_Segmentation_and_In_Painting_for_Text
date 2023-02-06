@@ -47,6 +47,9 @@ from shapely.geometry import Polygon, MultiPolygon # (pip install Shapely)
 #needed to generate datetime
 import datetime
 
+# import multiprocessing
+from multiprocessing import Process, Lock, cpu_count, Pool
+
 # 18 distinct colors with black and white excluded
 #taken from: https://sashamaps.net/docs/resources/20-colors/
 # import COCO_json_segmentation_dataset_generation_from_binary_mask
@@ -56,22 +59,28 @@ group_colors = [(230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200), (24
 # source_path = r'.\coco_json_data_gen_test_data_source_20230125' #r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
 # dest_path = '.\coco_json_data_gen_test_destination_20230125' #r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
 
-source_path = r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
-dest_path = r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
+# source_path = r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
+# dest_path = r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
 
 # source_path = r'.\coco_json_debug_20230128_source'
 # dest_path = r'.\coco_json_debug_20230128_destination'
+
+# source_path = r'.\combined_dataset_size_512'
+# dest_path = r'.\coco_json_combined_dataset_size_512'
+
+source_path = r'.\coco_json_data_gen_test_data_source_20230125' #r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
+dest_path = '.\coco_json_data_gen_test_destination_20230125_new_multi_process_debug_20230206' #r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
 
 
 coco_data_set_name = dest_path[2:] + '_coco_dataset.json'
 dest_subdir_name = ['Original', 'Colored_Ground_Truth'] #First should be the original images, the second should be the masks/ground_truth data with different colors
 
-data_file_path = r'.\combined_dataset_checked_additonal_exclusions_1'#r'.\combined_dataset_checked'
-new_processed_data_path = data_file_path + '_COCO_img_seg_dataset_format'
+# data_file_path = r'.\combined_dataset_checked_additonal_exclusions_1'#r'.\combined_dataset_checked'
+# new_processed_data_path = data_file_path + '_COCO_img_seg_dataset_format'
 np.random.seed(42)
 INIT_CENTERS = 2 #1
 MAX_CENTERS = 18 # max capable by x-means is 20 but, only 18 is used because 18 colors are used to separate groups
-MIN_DISTANCE = 10 #5 #3 #any distance greater than MIN_DISTANCE will result in separate objects
+MIN_DISTANCE = 20 #10 #5 #3 #any distance greater than MIN_DISTANCE will result in separate objects
 GEN_COLORED_MASK = True # Generates colored version of mask/Ground_Truth File at dest_subdir Colored_Ground_Truth when True
 
 sub_directory_list = ['train_dir', 'valid_dir', 'test_dir']
@@ -422,18 +431,19 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
 
 
     #### Original Implementation Start, not from reference website:
-    (rows, cols) = np.shape(partial_mask)
-    padded_mask = np.zeros((rows + 2, cols + 2), dtype=np.uint8) # np.uint8 as it caused errors in cv2.findContours
+    '''
+    # (rows, cols) = np.shape(partial_mask)
+    # padded_mask = np.zeros((rows + 2, cols + 2), dtype=np.uint8) # np.uint8 as it caused errors in cv2.findContours
     # print('np.shape(partial_mask)', np.shape(partial_mask))
     # print('np.shape(padded_mask)', np.shape(padded_mask))
     # print('rows + 2, cols + 2', rows + 2, cols + 2)
 
-    padded_mask[1:rows + 1, 1:cols + 1] = partial_mask
+    # padded_mask[1:rows + 1, 1:cols + 1] = partial_mask
 
     # plt.imshow(padded_mask)
     # plt.show()
-    cv2_contours, _ = cv2.findContours(padded_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
-
+    # cv2_contours, _ = cv2.findContours(padded_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
+    cv2_contours, _ = cv2.findContours(partial_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
     points = []
     x_coordinate_list = []
     y_coordinate_list = []
@@ -446,8 +456,8 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
         # partial_points = restored_approx.ravel().tolist()
         if len(contour) >= 3: # only add only if contour form a discernable area
             area = area + cv2.contourArea(contour)
-            recalibrated_contour = np.subtract(contour, 1) # subtract all coordinates x and y by one to account for padding
-            partial_points = recalibrated_contour.ravel().tolist()
+            # recalibrated_contour = np.subtract(contour, 1) # subtract all coordinates x and y by one to account for padding
+            partial_points = contour.ravel().tolist()
             #move the coordinates to the entire object's position in image
             # needed as the current coordinates are based on just the object, not the entire image
             x_coordinate_list = x_coordinate_list + partial_points[0::2]
@@ -460,7 +470,10 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
 
 
     # print(points)
-
+    # return None when the contours or coordinates do not make sense
+    if x_coordinate_list == [] or y_coordinate_list == [] or area == 0:
+        print('Return None instead of segmentation, image_id, area',image_id, area)
+        return None
     cv2_min_x = min(x_coordinate_list)
     cv2_max_x = max(x_coordinate_list)
     cv2_min_y = min(y_coordinate_list)
@@ -479,6 +492,7 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
 
     #### Original Implementation End
     '''
+
     
     #add zero padding to partial_mask as contours cannot handle cases where mask touches edge
     (rows, cols) = np.shape(partial_mask)
@@ -530,7 +544,7 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
     for sub_list in segmentations:
         contour_point_num = contour_point_num + len(sub_list)
     # print('contour_point_num', contour_point_num)
-    '''
+
 
     annotation = {
         'segmentation': segmentations,
@@ -544,138 +558,215 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
 
     return annotation
 
-print('creating directories if it does not exist')
-#create destination directory if it does not exist
-make_check_dir(dest_path)
-#create Original and Ground_Truth the destination path
-for dir_name in dest_subdir_name :
-    make_check_dir(os.path.join(dest_path, dir_name))
+def foo_multi_process_function(input_tuples):
+    return_annotation_list = []
+    (file_id, file_path,category_id, is_crowd, gen_colored_mask_setting) = input_tuples
+    file_base_name = os.path.basename(file_path)
+    original_mask = cv2.imread(file_path)
+    is_mask_black = (cv2.countNonZero(original_mask[:, :,
+                                      0]) == 0)  # just check the first channel as cv2.countNonZero works only for single channel images
+    if is_mask_black: # mask/Ground_Truth is completely black
+        if gen_colored_mask_setting: # if mask is black(i.e. empty) no need to generate colored mask just copy empty file
+            shutil.copy(file_path, os.path.join(dest_path, dest_subdir_name[1], file_base_name))
+        return_annotation_list = None
+        # return return_annotation_list # no annotations needed when file is completely black
+    else:
+        box_masks, boxes, w, h = extract_bboxes(file_path)
+        if gen_colored_mask_setting:
+            colored_mask = colored_mask_generator(original_mask, box_masks, boxes)
+            cv2.imwrite(os.path.join(dest_path, dest_subdir_name[1], file_base_name), colored_mask)
+        num_objects = len(boxes)
+        for object_num in range(num_objects):
+            # annotation_id = -1 is currently a placeholder to be replaced afterwards
+            object_annotation = create_annotation_from_partial_mask(box_masks[object_num], boxes[object_num],
+                                                                    image_id=file_id, category_id=category_id,
+                                                                    annotation_id=-1, is_crowd=is_crowd)
+
+            if object_annotation == None or object_annotation['area'] == 0 or np.isnan(object_annotation['bbox']).any():
+                # when object has area of 0, invalid representation of object skip from consideration
+                # or if the object has invalid bbox(containing NaN instead of ints)
+                pass
+            else:
+                # remove empty list from 'segmentation' list of lists
+                object_annotation['segmentation'] = list(filter(lambda x: x != [], object_annotation['segmentation']))
+                return_annotation_list.append(object_annotation)
+        if return_annotation_list == []: # if there are no valid annotations return None
+            return_annotation_list = None
+    return return_annotation_list
+if __name__ == "__main__":
+    print('creating directories if it does not exist')
+    #create destination directory if it does not exist
+    make_check_dir(dest_path)
+    #create Original and Ground_Truth the destination path
+    for dir_name in dest_subdir_name :
+        make_check_dir(os.path.join(dest_path, dir_name))
 
 
-(train_x, train_y), (valid_x, valid_y), (test_x, test_y) = load_data(data_file_path)
-images_list = sorted(glob(os.path.join(source_path, "Original\\*")))
-masks_list = sorted(glob(os.path.join(source_path, "Ground_Truth\\*")))
+    # (train_x, train_y), (valid_x, valid_y), (test_x, test_y) = load_data(data_file_path)
+    images_list = sorted(glob(os.path.join(source_path, "Original\\*")))
+    masks_list = sorted(glob(os.path.join(source_path, "Ground_Truth\\*")))
 
-# All the file names for images and mask should be identical in both name and order
-assert [os.path.basename(x) for x in images_list] == [os.path.basename(x) for x in masks_list], 'All the file names for images and mask should be identical in both name and order'
+    # All the file names for images and mask should be identical in both name and order
+    assert [os.path.basename(x) for x in images_list] == [os.path.basename(x) for x in masks_list], 'All the file names for images and mask should be identical in both name and order'
 
 
-print('copying Originals')
-#copy Originals without any modifications using shutil
-time.sleep(0.1) # without delay the progress bar becomes a bit messed up
-for file_path in tqdm.tqdm(images_list):
-    copy_path = os.path.join(dest_path, dest_subdir_name[0], os.path.basename(file_path))
-    shutil.copy(file_path, copy_path)
+    print('copying Originals')
+    #copy Originals without any modifications using shutil
+    time.sleep(0.1) # without delay the progress bar becomes a bit messed up
+    for file_path in tqdm.tqdm(images_list):
+        copy_path = os.path.join(dest_path, dest_subdir_name[0], os.path.basename(file_path))
+        shutil.copy(file_path, copy_path)
 
-print('Collect Original image data for COCO dataset')
-coco_image_list = []
-#mock image dictionary from COCO dataset
-#{"id":0,"license":1,"file_name":"94_png.rf.af4c070c32db598db1bee46b3503c07b.jpg","height":640,"width":640,"date_captured":"2023-01-15T12:09:02+00:00"}
-time.sleep(0.1)
-image_total_iter = len(images_list)
-license_id = 1 #license id for the images
-with tqdm.tqdm(total=image_total_iter) as pbar:
-    for i in range(image_total_iter):
-        file_path = images_list[i]
-        file_base_name = os.path.basename(file_path)
-        original_image = cv2.imread(file_path)
-        (original_image_height, original_image_width, _) = np.shape(original_image)
-        # Contain time elapsed since EPOCH in float
-        ti_c = os.path.getctime(file_path)
-        ti_m = os.path.getmtime(file_path)
-        # Converting the time in seconds to a timestamp
-        c_ti = time.ctime(ti_c)
-        m_ti = time.ctime(ti_m)
-        image_dict = {
-            'id': i,
-            'license': license_id, #just set uniform license placeholder for now
-            'file_name': file_base_name,
-            'height': original_image_height,
-            'width': original_image_width,
-            'date_captured': c_ti # Use file creation date instead of last modification date
+    print('Collect Original image data for COCO dataset')
+    coco_image_list = []
+    #mock image dictionary from COCO dataset
+    #{"id":0,"license":1,"file_name":"94_png.rf.af4c070c32db598db1bee46b3503c07b.jpg","height":640,"width":640,"date_captured":"2023-01-15T12:09:02+00:00"}
+    time.sleep(0.1)
+    image_total_iter = len(images_list)
+    license_id = 1 #license id for the images
+    with tqdm.tqdm(total=image_total_iter) as pbar:
+        for i in range(image_total_iter):
+            file_path = images_list[i]
+            file_base_name = os.path.basename(file_path)
+            original_image = cv2.imread(file_path)
+            (original_image_height, original_image_width, _) = np.shape(original_image)
+            # Contain time elapsed since EPOCH in float
+            ti_c = os.path.getctime(file_path)
+            ti_m = os.path.getmtime(file_path)
+            # Converting the time in seconds to a timestamp
+            c_ti = time.ctime(ti_c)
+            m_ti = time.ctime(ti_m)
+            image_dict = {
+                'id': i,
+                'license': license_id, #just set uniform license placeholder for now
+                'file_name': file_base_name,
+                'height': original_image_height,
+                'width': original_image_width,
+                'date_captured': c_ti # Use file creation date instead of last modification date
+            }
+            coco_image_list.append(image_dict)
+            pbar.update(1)
+
+
+
+    print('Running preprocessing (clustering objects in image) and generating COCO dataset')
+    #copy masks and also do processing to produce object annotation files(numpy array, .npy) that stores object mask,
+    #copy Ground_Truth without any modifications using shutil
+    coco_annotation_list = []
+    total_iter = len(masks_list)
+    print(total_iter)
+    time.sleep(0.1) #delay added to stop print from interfering with tqdm progress bar
+    annotation_id = 0
+    is_crowd = 0
+    category_id = 1 # 0 is for background and 1 is for text, as all annotation is text fix id to 1
+
+    counter = 0
+    counter_lock = Lock()
+    # Multiprocessing Attempt
+
+
+    # passes the arguments to foo_multi_process_function() for multiprocessing
+    # arguments: (file_id, file_path, category_id, is_crowd, gen_colored_mask_setting)
+    mask_id_path_list = [(i,x, category_id, is_crowd, GEN_COLORED_MASK) for i,x in enumerate(masks_list)]
+
+    # with Pool(processes=cpu_count()) as pool:
+    #     results = [pool.apply_async(foo, args=(input_tuples, counter_lock, GEN_COLORED_MASK)) for input_tuples in mask_id_path_list]
+    #     with tqdm.tqdm(total=len(results)) as pbar:
+    #         for i, result in enumerate(results):
+    #             annotations = result.get()
+    #             if annotations[0] == None:
+    #                 pass
+    #             else:
+    #                 all_annotations = all_annotations + annotations
+    print('Run Multiprocessing, id of each annotation is set to -1 by default and reassigned later sequentially')
+    time.sleep(0.1)
+    all_annotations = []
+    with Pool() as pool:
+        print("Number of threads: ", pool._processes)
+        time.sleep(0.1)
+        for result in tqdm.tqdm(pool.imap_unordered(foo_multi_process_function, mask_id_path_list), total=len(mask_id_path_list)):
+            if result is not None:
+                all_annotations.extend(result)
+
+    # Assign id of each annotation as they were all assigned to be -1 during multiprocessing
+    print('Assign id of each annotation as they were all assigned to be -1 during multiprocessing')
+    time.sleep(0.1)
+    counter = 0
+    for annot in tqdm.tqdm(all_annotations):
+        annot['id'] = counter
+        counter = counter + 1
+
+    # print(all_annotations)
+    coco_annotation_list = all_annotations
+
+    # with tqdm.tqdm(total=total_iter) as pbar:
+    #     for i in range(total_iter):
+    #         file_path = masks_list[i]
+    #         file_base_name = os.path.basename(file_path)
+    #         original_mask = cv2.imread(file_path)
+    #         is_mask_black = (cv2.countNonZero(original_mask[:, :, 0]) == 0)  # just check the first channel as cv2.countNonZero works only for single channel images
+    #         if is_mask_black:  # mask/Ground_Truth is completely black
+    #             if GEN_COLORED_MASK:  # if mask is black(i.e. empty) no need to generate colored mask just copy empty file
+    #                 shutil.copy(file_path, os.path.join(dest_path, dest_subdir_name[1], file_base_name))
+    #             pbar.update(1)
+    #         else:
+    #             box_masks, boxes, w, h = extract_bboxes(file_path)
+    #             if GEN_COLORED_MASK:
+    #                 colored_mask = colored_mask_generator(original_mask, box_masks, boxes)
+    #                 # dest_path//dest_subdir_name[1](Colored_Mask)//file_name.png
+    #                 cv2.imwrite(os.path.join(dest_path, dest_subdir_name[1], file_base_name), colored_mask)
+    #
+    #             num_objects = len(boxes)
+    #
+    #
+    #             for object_num in range(num_objects):
+    #                 object_annotation = create_annotation_from_partial_mask(box_masks[object_num], boxes[object_num], image_id=i, category_id=category_id, annotation_id=annotation_id, is_crowd=is_crowd)
+    #                 if object_annotation == None or object_annotation['area'] == 0 or np.isnan(object_annotation['bbox']).any():
+    #                     # when object has area of 0, invalid representation of object skip from consideration
+    #                     # or if the object has invalid bbox(containing NaN instead of ints)
+    #                     pass
+    #                 else:
+    #                     # remove empty list from 'segmentation' list of lists
+    #                     object_annotation['segmentation'] = list(filter(lambda x: x != [], object_annotation['segmentation']))
+    #                     annotation_id = annotation_id + 1
+    #                     coco_annotation_list.append(object_annotation)
+    #             pbar.update(1)
+
+    coco_info = \
+        {
+            "year": datetime.date.today().year, # 2023
+            "version": 1,
+            "description": 'A COCO dataset generated using COCO_json_segmentation_dataset_generation_from_binary_mask.py from original directory {}'.format(source_path),
+            "contributor": 'kmcho2019', #GitHub id
+            "url": r'https://github.com/kmcho2019/Webtoon_Image_Segmentation_and_In_Painting_for_Text',
+            "date_created": str(current_datetime),
+    }
+
+
+    coco_category_list =[
+        {
+            "id": category_id,  # 1 normally can be changed
+            "name": "text",
+            "supercategory": "text"
         }
-        coco_image_list.append(image_dict)
-        pbar.update(1)
+    ]
 
-
-
-print('Running preprocessing (clustering objects in image) and generating COCO dataset')
-#copy masks and also do processing to produce object annotation files(numpy array, .npy) that stores object mask,
-#copy Ground_Truth without any modifications using shutil
-coco_annotation_list = []
-total_iter = len(masks_list)
-print(total_iter)
-time.sleep(0.1) #delay added to stop print from interfering with tqdm progress bar
-annotation_id = 0
-is_crowd = 0
-category_id = 1 # 0 is for background and 1 is for text, as all annotation is text fix id to 1
-with tqdm.tqdm(total=total_iter) as pbar:
-    for i in range(total_iter):
-        file_path = masks_list[i]
-        file_base_name = os.path.basename(file_path)
-        original_mask = cv2.imread(file_path)
-        is_mask_black = (cv2.countNonZero(original_mask[:, :, 0]) == 0)  # just check the first channel as cv2.countNonZero works only for single channel images
-        if is_mask_black:  # mask/Ground_Truth is completely black
-            if GEN_COLORED_MASK:  # if mask is black(i.e. empty) no need to generate colored mask just copy empty file
-                shutil.copy(file_path, os.path.join(dest_path, dest_subdir_name[1], file_base_name))
-            pbar.update(1)
-        else:
-            box_masks, boxes, w, h = extract_bboxes(file_path)
-            if GEN_COLORED_MASK:
-                colored_mask = colored_mask_generator(original_mask, box_masks, boxes)
-                # dest_path//dest_subdir_name[1](Colored_Mask)//file_name.png
-                cv2.imwrite(os.path.join(dest_path, dest_subdir_name[1], file_base_name), colored_mask)
-
-            num_objects = len(boxes)
-
-
-            for object_num in range(num_objects):
-                object_annotation = create_annotation_from_partial_mask(box_masks[object_num], boxes[object_num], image_id=i, category_id=category_id, annotation_id=annotation_id, is_crowd=is_crowd)
-                if object_annotation['area'] == 0 or np.isnan(object_annotation['bbox']).any():
-                    # when object has area of 0, invalid representation of object skip from consideration
-                    # or if the object has invalid bbox(containing NaN instead of ints)
-                    pass
-                else:
-                    # remove empty list from 'segmentation' list of lists
-                    object_annotation['segmentation'] = list(filter(lambda x: x != [], object_annotation['segmentation']))
-                    annotation_id = annotation_id + 1
-                    coco_annotation_list.append(object_annotation)
-            pbar.update(1)
-coco_info = \
-    {
-        "year": datetime.date.today().year, # 2023
-        "version": 1,
-        "description": 'A COCO dataset generated using COCO_json_segmentation_dataset_generation_from_binary_mask.py from original directory {}'.format(source_path),
-        "contributor": 'kmcho2019', #GitHub id
-        "url": r'https://github.com/kmcho2019/Webtoon_Image_Segmentation_and_In_Painting_for_Text',
-        "date_created": str(current_datetime),
-}
-
-
-coco_category_list =[
-    {
-        "id": category_id,  # 1 normally can be changed
-        "name": "text",
-        "supercategory": "text"
+    coco_license_list = [
+        {
+            "id": license_id,
+            "name": 'PLACEHOLDER NOT DETERMINED YET',
+            "url": 'PLACEHOLDER NOT DETERMINED YET'
+        }
+    ]
+    output_dataset =\
+        {
+            "info": coco_info, #info,
+            "categories": coco_category_list, #[categories],
+            "images": coco_image_list, #[image],
+            "annotations": coco_annotation_list, #[annotation],
+            "licenses": coco_license_list #[license]
     }
-]
 
-coco_license_list = [
-    {
-        "id": license_id,
-        "name": 'PLACEHOLDER NOT DETERMINED YET',
-        "url": 'PLACEHOLDER NOT DETERMINED YET'
-    }
-]
-output_dataset =\
-    {
-        "info": coco_info, #info,
-        "categories": coco_category_list, #[categories],
-        "images": coco_image_list, #[image],
-        "annotations": coco_annotation_list, #[annotation],
-        "licenses": coco_license_list #[license]
-}
-
-# Write the JSON data to a file
-with open(os.path.join(dest_path, coco_data_set_name), 'w') as json_file:
-    json.dump(output_dataset, json_file)
+    # Write the JSON data to a file
+    with open(os.path.join(dest_path, coco_data_set_name), 'w') as json_file:
+        json.dump(output_dataset, json_file)
