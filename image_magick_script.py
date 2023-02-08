@@ -6,7 +6,7 @@ import math
 import glob
 import datetime
 
-run_magick_script = False
+run_magick_script = True
 use_combine_panel_mode = False #try to process data even if clean original panel number is different by combining them, tends to produce pretty bad data
 print('run_magick_script', run_magick_script)
 resize_width = 512 #256
@@ -20,6 +20,15 @@ directory_name_list = ['100', '101', '102', '103', '104', '105']
 diff_slice_file_path = r'.\combined_diff_slice_size_512'#r'.\VLT_diff_slice_100_105'#r'C:\Users\kmcho\OneDrive - postech.ac.kr\바탕 화면\2022_2_Semester\Signals_and_Systems_EECE233\Research_Project\Test_images\VLT_diff_slice_100_105'
 original_resize_file_path = r'.\combined_original_resize_size_512' #r'.\VLT_original_224_resize_100_105'
 combined_file_path = r'.\combined_dataset_size_512' #r'.\VLT_combined_224_resize_100_105' #stores all of the files in image form, directories Original (for resized original panel) and Grount Truth (for difference)
+
+original_file_path = r'.\Validation_Combined_Original'
+clean_file_path = r'.\Validation_Combined_Clean'
+diff_file_path = r'.\Validation_Combined_Diff_Size_512'
+diff_slice_file_path = r'.\Validation_Combined_Diff_Slice_Size_512'
+original_resize_file_path = r'.\Validation_Combined_Original_Resized_Size_512'
+combined_file_path = r'.\Validation_Combined_Dataset_Size_512'
+
+
 
 output_image_name = directory_name_list[0]
 

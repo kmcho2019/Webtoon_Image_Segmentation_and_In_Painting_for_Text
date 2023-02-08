@@ -68,8 +68,12 @@ group_colors = [(230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200), (24
 # source_path = r'.\combined_dataset_size_512'
 # dest_path = r'.\coco_json_combined_dataset_size_512'
 
-source_path = r'.\coco_json_data_gen_test_data_source_20230125' #r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
-dest_path = '.\coco_json_data_gen_test_destination_20230125_new_multi_process_debug_20230206' #r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
+# source_path = r'.\coco_json_data_gen_test_data_source_20230125' #r'.\combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_data_source_20230125'
+# dest_path = '.\coco_json_data_gen_test_destination_20230125_new_multi_process_debug_20230206' #r'.\coco_json_combined_dataset_checked_additonal_exclusions_1' #r'.\coco_json_data_gen_test_destination_20230125'
+
+source_path = r'.\Validation_Combined_Dataset_Size_512'
+dest_path = r'.\coco_json_Validation_Combined_Dataset_Size_512'
+
 
 
 coco_data_set_name = dest_path[2:] + '_coco_dataset.json'
@@ -525,11 +529,19 @@ def create_annotation_from_partial_mask(partial_mask, bounding_box, image_id, ca
         poly = Polygon(contour)
         # print('\npoly\n', poly)
         poly = poly.simplify(1.0, preserve_topology=False)
-        polygons.append(poly)
-        segmentation = np.array(poly.exterior.coords).ravel().tolist()
-
-        # print('\nsegmentation\n', segmentation)
-        segmentations.append(segmentation)
+        if (poly.area > 16): # Ignore tiny polygons
+            if (poly.geom_type == 'MultiPolygon'):
+                # if MultiPolygon, take the smallest convex Polygon containing all the points in the object
+                poly = poly.convex_hull
+            if (poly.geom_type == 'Polygon'): # Ignore if still not a Polygon (could be a line or point)
+                polygons.append(poly)
+                segmentation = np.array(poly.exterior.coords).ravel().tolist()
+                # print('\nsegmentation\n', segmentation)
+                segmentations.append(segmentation)
+    if len(polygons) == 0:
+        # No visible polygons exist, ignore.
+        # Return None instead of any annotations
+        return None
     # print('\nsegmentations\n', segmentations)
     # Combine the polygons to calculate the bounding box and area
     multi_poly = MultiPolygon(polygons)

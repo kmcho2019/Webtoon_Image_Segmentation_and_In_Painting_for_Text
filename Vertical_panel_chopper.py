@@ -21,8 +21,6 @@ import math
 import glob
 
 RESIZE_WIDTH = 512
-source_dir = r'.\VLT_original_100_105'
-dest_dir = r'.\VLT_original_100_105_sliced_testing'
 
 def make_check_dir(check_file_path):
     isExist = os.path.exists(check_file_path)
@@ -50,31 +48,41 @@ def image_processing_pipeline(f_original_image_name, f_resize_width=RESIZE_WIDTH
                                      interpolation=cv2.INTER_AREA)  # cv2.INTER_CUBIC
     return f_original_resize_img, f_slice_num, f_resize_height
 
-make_check_dir(dest_dir)
+if __name__ == "__main__":
+    source_dir = r'.\VLT_original_100_105'
+    dest_dir = r'.\VLT_original_100_105_sliced_testing'
 
-vertical_panel_list = glob.glob(os.path.join(source_dir, '**', '*.png'), recursive=True)
+    source_dir = r'.\Dataset_synthesis_testing\background_collection\unprocessed_background_collection'
+    dest_dir = r'.\Dataset_synthesis_testing\background_collection\processed_background_collection'
 
-for current_file_path in tqdm.tqdm(vertical_panel_list):
-    # create diff file by comparing original and clean
-    # print('i', i)
-    current_file_dir = os.path.basename(os.path.dirname(current_file_path))
-    current_file_name = os.path.basename(current_file_path)
-    new_file_name = current_file_dir + '_' + current_file_name[:-4] # remove the png tag
+    make_check_dir(dest_dir)
 
-    # new_file_path = os.path.join(dest_dir, new_file_name)
-    # create diff_slice file by processing slice
-    # taken from Image_processing.ipynb
+    vertical_panel_list = glob.glob(os.path.join(source_dir, '**', '*.png'), recursive=True)
+    series_dir_list = os.listdir(source_dir)
+    for current_file_path in tqdm.tqdm(vertical_panel_list):
+        # create diff file by comparing original and clean
+        # print('i', i)
+        current_file_dir = os.path.basename(os.path.dirname(current_file_path))
+        current_file_name = os.path.basename(current_file_path)
+        subtract_length = len(os.path.join(current_file_dir, current_file_name))
+        series_dir_name = os.path.basename(current_file_path[:-(subtract_length + 1)]) # subtract chapter_dir and png name and also the \
+
+        new_file_name = series_dir_name + '_' + current_file_dir + '_' + current_file_name[:-4] # remove the png tag
+
+        # new_file_path = os.path.join(dest_dir, new_file_name)
+        # create diff_slice file by processing slice
+        # taken from Image_processing.ipynb
 
 
 
-    # new processing pipeline
-    original_resize_img, slice_num, resize_height = image_processing_pipeline(current_file_path, RESIZE_WIDTH)
+        # new processing pipeline
+        original_resize_img, slice_num, resize_height = image_processing_pipeline(current_file_path, RESIZE_WIDTH)
 
-    for j in range(slice_num):
-        # print(j)
-        if j == (slice_num - 1):
-            original_crop_img = original_resize_img[(resize_height - RESIZE_WIDTH):, :]
-        else:
-            original_crop_img = original_resize_img[RESIZE_WIDTH * j: RESIZE_WIDTH * (j + 1), :]
-        new_file_name_slice = new_file_name + '_slice_' + '{:03d}'.format(j + 1) + '.png'
-        cv2.imwrite(os.path.join(dest_dir, new_file_name_slice), original_crop_img)
+        for j in range(slice_num):
+            # print(j)
+            if j == (slice_num - 1):
+                original_crop_img = original_resize_img[(resize_height - RESIZE_WIDTH):, :]
+            else:
+                original_crop_img = original_resize_img[RESIZE_WIDTH * j: RESIZE_WIDTH * (j + 1), :]
+            new_file_name_slice = new_file_name + '_slice_' + '{:03d}'.format(j + 1) + '.png'
+            cv2.imwrite(os.path.join(dest_dir, new_file_name_slice), original_crop_img)

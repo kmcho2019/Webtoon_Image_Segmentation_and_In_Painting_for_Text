@@ -168,7 +168,7 @@ def apply_sine_cosine_distortion(foreground, max_wave_length=40, max_amplitude=5
 # application_prob - probability of blur effect being applied
 def apply_motion_blur(image, application_prob = 0.4):
     h, w, _ = np.shape(image)
-    max_size = int(min(h, w) // 10) # max motion blur is set as 10 % of minimum axis size
+    max_size = int(min(h, w) // 20) # max motion blur is set as 5 % of minimum axis size
     size_choice_array = [i for i in range(1, max_size + 1)] # need to add one to max_size to include it in choice array
     # if size is 1 then blur effect is not applied
     size_prob_array = [1-application_prob] + [round((application_prob / (len(size_choice_array)-1)), 4)] * (len(size_choice_array)-1)
@@ -217,7 +217,7 @@ def alpha_image_geo_mean_brightness(image, threshold=127):
 # also randomize color of image based on a probability
 def apply_brightness_calibration_and_randomize_color(image, background_brightness, color_change_prob = 0.):
 
-    if background_brightness < 40: # when background brightness is very dim make image brighter
+    if background_brightness < 64: # when background brightness is very dim make image brighter
         B_channel = random.randint(0, 255)
         G_channel = random.randint(0, 255)
         R_channel = random.randint(0, 255)
@@ -300,7 +300,7 @@ def augment_and_overlay_images(foreground, background, rotation_angle=45, reduct
     overlay_foreground = cv2.copyMakeBorder(cropped_foreground, top_padding, bottom_padding,left_padding,right_padding,cv2.BORDER_CONSTANT,None, value=0 )
 
     # draw contour based on alpha, but cv2.findContours need a binary image, binarize as resized foreground is not binary due to interpolation/resizing
-    binarize_alpha = np.vectorize(lambda x: 0 if x < 100 else 255)
+    binarize_alpha = np.vectorize(lambda x: 0 if x < 64 else 255)
     # print('overlay_foreground shape', np.shape(overlay_foreground))
     binary_contour_map_image = binarize_alpha(overlay_foreground[:,:,3])
     binary_contour_map_image = binary_contour_map_image.astype(np.uint8)
@@ -321,6 +321,16 @@ def augment_and_overlay_images(foreground, background, rotation_angle=45, reduct
     alpha_weighted_background = cv2.multiply(1 - foreground_alpha, background.astype(float))
     combined_image = cv2.add(alpha_weighted_foreground, alpha_weighted_background)
     combined_image = combined_image.astype(np.uint8)
+    # # draw contours around object
+    # if random.random() < 0.1: # 50 % probability of a white contour 2 pixels thick within contour
+    #     cv2.drawContours(combined_image, faster_contours, -1, (255, 255, 255), thickness=-5)
+    # else:
+    #     B_contour = random.randint(16, 256)
+    #     G_contour = random.randint(16, 256)
+    #     R_contour = random.randint(16, 256)
+    #     contour_color = (B_contour, G_contour, R_contour)
+    #     cv2.drawContours(combined_image, faster_contours, -1, color=contour_color, thickness=-5)
+    # combined_image = combined_image.astype(np.uint8)
     return combined_image, faster_contours
 
 
@@ -352,6 +362,11 @@ def augment_foreground(foreground, background, pre_existing_bboxes=None, pre_exi
                 segmentations.append(partial_segmentation)
                 x_coordinate_list = x_coordinate_list + partial_segmentation[0::2]
                 y_coordinate_list = y_coordinate_list + partial_segmentation[1::2]
+        # must have valid contour list
+        # check using x and y coordinate_list
+        if x_coordinate_list == [] or y_coordinate_list == []:
+            attempts = attempts - 1
+            continue
         min_x = min(x_coordinate_list)
         max_x = max(x_coordinate_list)
         min_y = min(y_coordinate_list)
@@ -512,7 +527,7 @@ def generate_image_and_coco_annotations(foreground_path, background_path, destin
     return coco_image_list, coco_annotation_list
 
 
-
+'''
 # distortion https://bkshin.tistory.com/entry/OpenCV-15-%EB%A6%AC%EB%A7%A4%ED%95%91Remapping-%EC%98%A4%EB%AA%A9%EB%B3%BC%EB%A1%9D-%EB%A0%8C%EC%A6%88-%EC%99%9C%EA%B3%A1Lens-Distortion-%EB%B0%A9%EC%82%AC-%EC%99%9C%EA%B3%A1Radial-Distortion
 # np.set_printoptions(threshold=sys.maxsize)
 # image = cv2.copyMakeBorder(src, top, bottom, left, right, borderType) # image padding function
@@ -559,27 +574,34 @@ overlay, annotation = augment_foreground(foreground, overlay,pre_existing_bboxes
 # DEBUG_view_cv2_image_array(overlay)
 
 cv2.imwrite('augment_foreground_output.png', overlay)
+'''
+
 
 license_id = 1
 category_id = 1
 is_crowd = 0
-coco_data_set_name = 'test_coco_dataset.json'
-background_path = r'./test_background'
-text_path = r'./test_sfx_images'
-dest_path = r'./test_destination'
+# coco_data_set_name = 'test_coco_dataset.json'
+# background_path = r'./test_background'
+# text_path = r'./test_sfx_images'
+# dest_path = r'./test_destination'
+
+coco_data_set_name = 'synthetic_coco_dataset.json'
+background_path = r'./background_collection/processed_background_collection/included_backgrounds'
+text_path = r'./text_collection/processed_foreground_collection'
+dest_path = r'./synthetic_dataset_20230208'
 
 coco_image_list, coco_annotation_list = generate_image_and_coco_annotations(foreground_path=text_path,
                                                                             background_path=background_path,
                                                                             destination_path=dest_path,
                                                                             max_foreground_num=3,
-                                                                            max_attempts_per_foreground=3,
-                                                                            num_images_per_background=3,
+                                                                            max_attempts_per_foreground=1,
+                                                                            num_images_per_background=1,
                                                                             license_id=license_id,
                                                                             category_id=category_id,
                                                                             is_crowd=is_crowd)
 
 
-current_datetime =  datetime.datetime.now()
+current_datetime = datetime.datetime.now()
 coco_info = \
     {
         "year": datetime.date.today().year, # 2023

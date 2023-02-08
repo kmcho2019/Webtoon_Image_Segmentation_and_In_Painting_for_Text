@@ -5,9 +5,9 @@ import glob
 USE_REFERENCE = False
 # Set the source and destination directories
 
-base_dir = r'.\combined_dataset_size_512'
-ground_truth_dir = os.path.join(base_dir, r"Ground_Truth_Copy")
-original_dir = os.path.join(base_dir, r"Original_Copy")
+base_dir = r'.\Validation_Combined_Dataset_Size_512'
+ground_truth_dir = os.path.join(base_dir, r"Ground_Truth_filtered")
+original_dir = os.path.join(base_dir, r"Original_filtered")
 excluded_original_dir = os.path.join(base_dir, r"excluded_Original")
 excluded_ground_truth_dir = os.path.join(base_dir, r"excluded_Ground_Truth")
 
