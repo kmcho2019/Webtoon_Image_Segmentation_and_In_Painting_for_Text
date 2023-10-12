@@ -6,5 +6,5 @@ The environment can be setup using the environment.yml folder using anaconda.
 (Might need to update the prefix at the end of environment.yml. "prefix: /home/user_name/.conda/envs/new_env_name")
 Python version is 3.9.16.
 The weights were trained using dataset mixed with synthetic dataset.
-There are two weights of iter_368750.pth and fine_tuned_iter_368750.pth, the latter had higher validation accuracy but anyone can be used.
+There are two weights of iter_368750.pth and finetuned_iter_36875.pth, the latter had higher validation accuracy but anyone can be used.
 
