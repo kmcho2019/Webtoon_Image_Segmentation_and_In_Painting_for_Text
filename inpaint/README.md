@@ -22,6 +22,7 @@ or the code itself.
 
 ### Environment Setup
 - A `huggingface_diffusers_environment.yaml` file is provided to help set up the necessary conda environment for running the script.
+- Example: `conda env create -f huggingface_diffusers_environment.yml`
 
 ## Current Limitations and Future Work
 - **Artifacts**: There are known issues with artifacts, especially on white backgrounds where strange objects may appear.
